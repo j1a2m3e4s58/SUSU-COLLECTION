@@ -114,6 +114,35 @@ DISABLED_CONTENT_MODULES = {
     "support",
 }
 
+OWNER_ADMIN_USER = {
+    "id": "owner-admin-1",
+    "fullname": "Site Creator Owner",
+    "phone": "0000000000",
+    "email": "sitecreator@bawjiasecommunitybank.com",
+    "role": OWNER_ADMIN_ROLE,
+    "position": "Site Creator",
+    "department": "SUSU",
+    "branch": "HEAD OFFICE",
+    "imageFile": None,
+    "managedBranches": ["ALL"],
+    "managedDepartmentsByBranch": {},
+    "permissions": {
+        "userManagement": True,
+        "customers": True,
+        "transactions": True,
+        "reports": True,
+        "agents": True,
+        "branches": True,
+        "auditLog": True,
+        "backupExport": True,
+    },
+    "isActive": True,
+    "isVerified": True,
+    "lastSeen": 0,
+    "registrationTime": 0,
+    "isArchived": False,
+}
+
 INITIAL_USERS = [
     {
         "id": "db-user-6",
@@ -305,16 +334,19 @@ initialize_data_directory()
 
 
 def seed_password_store_if_needed() -> None:
-    existing = read_json_file(PASSWORD_STORE_PATH, {})
-    if not isinstance(existing, dict) or existing:
-        return
     if not DEFAULT_INITIAL_PASSWORD:
         return
-    seeded = {
-        user["email"]: hash_password_for_storage(DEFAULT_INITIAL_PASSWORD)
-        for user in INITIAL_USERS
-    }
-    save_password_store(seeded)
+    existing = read_json_file(PASSWORD_STORE_PATH, {})
+    passwords = existing if isinstance(existing, dict) else {}
+    changed = False
+    for user in [OWNER_ADMIN_USER, *INITIAL_USERS]:
+        email = str(user.get("email", "")).strip().lower()
+        if not email or passwords.get(email):
+            continue
+        passwords[email] = hash_password_for_storage(DEFAULT_INITIAL_PASSWORD)
+        changed = True
+    if changed:
+        save_password_store(passwords)
 
 
 def allowed_origins() -> set[str]:
@@ -834,7 +866,7 @@ def normalize_user(raw: dict) -> dict:
 def load_user_store() -> list[dict]:
     raw = read_json_file(USERS_STORE_PATH, [])
     users_by_email = {}
-    for default_user in INITIAL_USERS:
+    for default_user in [OWNER_ADMIN_USER, *INITIAL_USERS]:
         normalized = normalize_user(default_user)
         users_by_email[normalized["email"]] = normalized
     if isinstance(raw, list):
