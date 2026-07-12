@@ -1,0 +1,386 @@
+import React, { useState, useEffect } from 'react';
+import { createAuditLog, deleteStaff, exportBackup, getActiveStaff, getCollections, getPortalSettings, updateStaff } from '@/api/portalClient';
+import ControlledSelect from '@/components/ui/controlled-select';
+import { useAuth } from '@/lib/AuthContext';
+import { exportHtmlPdf } from '@/lib/pdfExport';
+import { UserCog, Search, Building2, X, AlertCircle, Loader2, Trash2, FileText, Download } from 'lucide-react';
+
+export default function AgentManagement() {
+  const { user } = useAuth();
+  const [staff, setStaff] = useState([]);
+  const [branches, setBranches] = useState([]);
+  const [collections, setCollections] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [transferAgent, setTransferAgent] = useState(null);
+  const [newBranch, setNewBranch] = useState('');
+  const [reason, setReason] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [deletingSelected, setDeletingSelected] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteBackupReady, setDeleteBackupReady] = useState(false);
+  const [exportingBackup, setExportingBackup] = useState(false);
+
+  useEffect(() => {
+    Promise.all([
+      getActiveStaff(),
+      getPortalSettings(),
+      getCollections(),
+    ]).then(([s, b, c]) => {
+      setStaff((s || []).filter(x => String(x.department || '').trim().toUpperCase() === 'SUSU AGENT'));
+      setBranches(b?.branches || []);
+      setCollections(c || []);
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  }, []);
+
+  const filtered = staff.filter(s => {
+    const q = search.toLowerCase().trim();
+    return !q ||
+      s.fullname?.toLowerCase().includes(q) ||
+      s.full_name?.toLowerCase().includes(q) ||
+      s.agent_code?.toLowerCase().includes(q) ||
+      s.branch_name?.toLowerCase().includes(q) ||
+      s.branch?.toLowerCase().includes(q);
+  });
+  const filteredIds = filtered.map((item) => item.id);
+  const allFilteredSelected = filteredIds.length > 0 && filteredIds.every((id) => selectedIds.has(id));
+
+  const getAgentStats = (agentName) => {
+    const agentCols = collections.filter(c => c.agent_name === agentName);
+    const today = new Date().toISOString().split('T')[0];
+    const todayCols = agentCols.filter(c => c.transaction_date === today);
+    return {
+      total: agentCols.reduce((s, c) => s + (c.amount || 0), 0),
+      today: todayCols.reduce((s, c) => s + (c.amount || 0), 0),
+      count: agentCols.length,
+      todayCount: todayCols.length,
+    };
+  };
+
+  const handleTransfer = async () => {
+    if (!newBranch || !reason) { setError('Please select a branch and provide a reason'); return; }
+    setSaving(true); setError('');
+    const oldBranch = transferAgent.branch || transferAgent.branch_name || 'Unassigned';
+    try {
+      await updateStaff(transferAgent.id, {
+        branch: newBranch,
+      });
+      await createAuditLog({
+        action: 'branch_switch',
+        target: `Agent ${transferAgent.fullname || transferAgent.full_name} transferred from ${oldBranch} to ${newBranch}. Reason: ${reason}`,
+      });
+      setSuccess(`${transferAgent.fullname || transferAgent.full_name} transferred to ${newBranch}`);
+      setTransferAgent(null); setNewBranch(''); setReason('');
+      setTimeout(() => setSuccess(''), 4000);
+      const refreshed = await getActiveStaff();
+      setStaff((refreshed || []).filter(x => String(x.department || '').trim().toUpperCase() === 'SUSU AGENT'));
+    } catch { setError('Failed to transfer agent. Please try again.'); }
+    setSaving(false);
+  };
+
+  const toggleSelected = (agentId) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(agentId)) next.delete(agentId);
+      else next.add(agentId);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (allFilteredSelected) filteredIds.forEach((id) => next.delete(id));
+      else filteredIds.forEach((id) => next.add(id));
+      return next;
+    });
+  };
+
+  const handleDeleteSelected = async () => {
+    if (!deleteBackupReady) {
+      setError('Export a backup before deleting agents.');
+      return;
+    }
+    const selectedAgents = staff.filter((agent) => selectedIds.has(agent.id));
+    if (selectedAgents.length === 0) return;
+    setDeletingSelected(true);
+    setError('');
+    try {
+      await Promise.all(selectedAgents.map((agent) => deleteStaff(agent.id)));
+      await createAuditLog({
+        action: 'agent_bulk_delete',
+        target: `Deleted agents: ${selectedAgents.map((agent) => agent.fullname || agent.full_name).join(', ')}`,
+      });
+      setStaff((current) => current.filter((agent) => !selectedIds.has(agent.id)));
+      setSelectedIds(new Set());
+      setDeleteBackupReady(false);
+      setSuccess(`${selectedAgents.length} agent(s) deleted from the system.`);
+      setTimeout(() => setSuccess(''), 4000);
+    } catch (err) {
+      setError(err.message || 'Failed to delete selected agents.');
+    }
+    setDeletingSelected(false);
+  };
+
+  const exportAgentsPdf = () => {
+    const totalToday = filtered.reduce((sum, agent) => sum + getAgentStats(agent.fullname || agent.full_name).today, 0);
+    const totalLifetime = filtered.reduce((sum, agent) => sum + getAgentStats(agent.fullname || agent.full_name).total, 0);
+    exportHtmlPdf({
+      title: 'Agent Management Report',
+      subtitle: 'Agent branch assignments and collection performance from the local system.',
+      filename: 'agent-management-report',
+      summary: [
+        { label: 'Agents', value: filtered.length },
+        { label: 'Branches', value: new Set(filtered.map((agent) => agent.branch || agent.branch_name || 'Unassigned')).size },
+        { label: 'Today Collected', value: `GHS ${totalToday.toLocaleString()}` },
+        { label: 'Lifetime Collected', value: `GHS ${totalLifetime.toLocaleString()}` },
+      ],
+      columns: ['Agent Name', 'Code', 'Branch', 'Supervisor', 'Today', 'Total'],
+      rows: filtered.map((agent) => {
+        const displayName = agent.fullname || agent.full_name;
+        const stats = getAgentStats(displayName);
+        return [
+          displayName,
+          agent.agent_code || '-',
+          agent.branch || agent.branch_name || 'Unassigned',
+          agent.supervisor_name || '-',
+          `GHS ${stats.today.toLocaleString()} (${stats.todayCount} txns)`,
+          `GHS ${stats.total.toLocaleString()} (${stats.count} total)`,
+        ];
+      }),
+    });
+  };
+
+  const exportDeleteBackup = async () => {
+    setExportingBackup(true);
+    setError('');
+    try {
+      const backup = await exportBackup();
+      const blob = new Blob([JSON.stringify(backup.data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = backup.filename || `bawjiase-portal-backup-${Date.now()}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setDeleteBackupReady(true);
+      setSuccess('Backup exported. You can now delete the selected agent(s).');
+    } catch (err) {
+      setError(err.message || 'Could not export backup before delete.');
+    } finally {
+      setExportingBackup(false);
+    }
+  };
+
+  const inputClass = "w-full bg-muted/50 border border-border rounded-lg px-3 py-2.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40";
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="font-heading text-2xl lg:text-3xl font-bold text-foreground flex items-center gap-2"><UserCog className="w-6 h-6 text-blue-500" /> Agent Management</h1>
+        <p className="text-sm text-muted-foreground mt-1">Manage staff registered as SUSU AGENT, reassign branches, and monitor field performance</p>
+      </div>
+
+      {success && <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-sm text-emerald-500">{success}</div>}
+      {error && !transferAgent && <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-sm text-red-500">{error}</div>}
+
+      <div className="bg-card rounded-xl border border-border p-4">
+        <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search agent name, code, or branch..."
+              className={`w-full ${inputClass} pl-10`} />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {selectedIds.size > 0 && (
+              <button onClick={() => { setDeleteBackupReady(false); setConfirmDelete(true); }} disabled={deletingSelected}
+                className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50">
+                {deletingSelected ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                Delete Selected ({selectedIds.size})
+              </button>
+            )}
+            <button onClick={exportAgentsPdf}
+              className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
+              <FileText className="h-4 w-4" />
+              Export PDF
+            </button>
+          </div>
+        </div>
+        <div className="hidden overflow-x-auto md:block">
+          <table className="w-full text-sm">
+            <thead><tr className="border-b border-border text-left">
+              <th className="py-3 px-3 font-medium text-muted-foreground text-xs uppercase">
+                <input type="checkbox" checked={allFilteredSelected} onChange={toggleSelectAll} className="h-4 w-4 rounded border-border accent-blue-600" />
+              </th>
+              <th className="py-3 px-3 font-medium text-muted-foreground text-xs uppercase">Agent Name</th>
+              <th className="py-3 px-3 font-medium text-muted-foreground text-xs uppercase">Code</th>
+              <th className="py-3 px-3 font-medium text-muted-foreground text-xs uppercase hidden md:table-cell">Branch</th>
+              <th className="py-3 px-3 font-medium text-muted-foreground text-xs uppercase hidden lg:table-cell">Supervisor</th>
+              <th className="py-3 px-3 font-medium text-muted-foreground text-xs uppercase text-right">Today</th>
+              <th className="py-3 px-3 font-medium text-muted-foreground text-xs uppercase text-right hidden md:table-cell">Total</th>
+              <th className="py-3 px-3 font-medium text-muted-foreground text-xs uppercase text-center">Action</th>
+            </tr></thead>
+            <tbody>
+              {loading ? [...Array(5)].map((_, i) => <tr key={i} className="border-b border-border/50"><td colSpan={8} className="py-4 px-3"><div className="h-8 rounded bg-muted/40 animate-pulse" /></td></tr>)
+              : filtered.length === 0 ? <tr><td colSpan={8} className="py-12 text-center"><UserCog className="w-8 h-8 text-muted-foreground/40 mx-auto mb-2" /><p className="text-sm text-muted-foreground">No agents found</p></td></tr>
+              : filtered.map(a => {
+                const displayName = a.fullname || a.full_name;
+                const displayBranch = a.branch || a.branch_name || 'Unassigned';
+                const stats = getAgentStats(displayName);
+                return (
+                  <tr key={a.id} className="border-b border-border/50 hover:bg-muted/30 transition-colors">
+                    <td className="py-3 px-3">
+                      <input type="checkbox" checked={selectedIds.has(a.id)} onChange={() => toggleSelected(a.id)} className="h-4 w-4 rounded border-border accent-blue-600" />
+                    </td>
+                    <td className="py-3 px-3 font-medium text-foreground">{displayName}</td>
+                    <td className="py-3 px-3 text-muted-foreground font-mono text-xs">{a.agent_code || '-'}</td>
+                    <td className="py-3 px-3 text-muted-foreground hidden md:table-cell">{displayBranch}</td>
+                    <td className="py-3 px-3 text-muted-foreground hidden lg:table-cell">{a.supervisor_name || '-'}</td>
+                    <td className="py-3 px-3 text-right"><span className="text-emerald-500 font-semibold">GHS {stats.today.toLocaleString()}</span><br /><span className="text-xs text-muted-foreground">{stats.todayCount} txns</span></td>
+                    <td className="py-3 px-3 text-right hidden md:table-cell"><span className="text-foreground font-semibold">GHS {stats.total.toLocaleString()}</span><br /><span className="text-xs text-muted-foreground">{stats.count} total</span></td>
+                    <td className="py-3 px-3 text-center">
+                      <button onClick={() => { setTransferAgent(a); setNewBranch(''); setReason(''); setError(''); }}
+                        className="inline-flex items-center gap-1 bg-blue-500/10 text-blue-500 text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-blue-500/20 transition-colors">
+                        <Building2 className="w-3 h-3" /> Reassign
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className="space-y-3 md:hidden">
+          {loading ? (
+            Array.from({ length: 5 }).map((_, index) => <div key={index} className="h-36 animate-pulse rounded-xl border border-border bg-muted/30" />)
+          ) : filtered.length === 0 ? (
+            <div className="rounded-xl border border-border p-8 text-center">
+              <UserCog className="mx-auto mb-2 h-8 w-8 text-muted-foreground/40" />
+              <p className="text-sm text-muted-foreground">No agents found</p>
+            </div>
+          ) : filtered.map((a) => {
+            const displayName = a.fullname || a.full_name;
+            const displayBranch = a.branch || a.branch_name || 'Unassigned';
+            const stats = getAgentStats(displayName);
+            return (
+              <article key={a.id} className="rounded-xl border border-border bg-background/40 p-3">
+                <div className="flex items-start gap-3">
+                  <input type="checkbox" checked={selectedIds.has(a.id)} onChange={() => toggleSelected(a.id)} className="mt-1 h-4 w-4 rounded border-border accent-blue-600" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-foreground">{displayName}</p>
+                    <p className="font-mono text-xs text-muted-foreground">{a.agent_code || '-'}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{displayBranch}</p>
+                  </div>
+                  <button onClick={() => { setTransferAgent(a); setNewBranch(''); setReason(''); setError(''); }}
+                    className="shrink-0 rounded-lg bg-blue-500/10 px-3 py-1.5 text-xs font-medium text-blue-500">
+                    Reassign
+                  </button>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <p className="text-muted-foreground">Today</p>
+                    <p className="font-semibold text-emerald-500">GHS {stats.today.toLocaleString()}</p>
+                    <p className="text-muted-foreground">{stats.todayCount} txns</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-muted-foreground">Total</p>
+                    <p className="font-semibold text-foreground">GHS {stats.total.toLocaleString()}</p>
+                    <p className="text-muted-foreground">{stats.count} total</p>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </div>
+
+      {confirmDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
+          <div className="absolute inset-0 bg-black/65 backdrop-blur-sm" onClick={() => setConfirmDelete(false)} />
+          <div className="relative w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-2xl">
+            <div className="mb-4 flex items-start gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-red-500/10 text-red-500">
+                <Trash2 className="h-5 w-5" />
+              </div>
+              <div>
+                <h2 className="font-heading text-lg font-bold text-foreground">Delete selected agents?</h2>
+                <p className="mt-1 text-sm text-muted-foreground">This clears their login so they can sign up again.</p>
+              </div>
+            </div>
+            <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-500">
+              {selectedIds.size} agent(s) selected. This action cannot be undone.
+            </div>
+            <div className="mt-3 rounded-xl border border-blue-500/20 bg-blue-500/10 p-3 text-sm text-muted-foreground">
+              Export a backup before deleting so staff, customers, collections, and audit records can be restored if needed.
+              {deleteBackupReady && <span className="mt-1 block font-medium text-emerald-500">Backup exported for this delete action.</span>}
+            </div>
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button type="button" onClick={() => setConfirmDelete(false)} className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted">Cancel</button>
+              <button type="button" onClick={exportDeleteBackup} disabled={exportingBackup}
+                className="inline-flex items-center justify-center gap-2 rounded-lg border border-blue-500/30 px-4 py-2 text-sm font-medium text-blue-500 hover:bg-blue-500/10 disabled:opacity-50">
+                {exportingBackup ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                Export Backup
+              </button>
+              <button type="button" onClick={async () => { setConfirmDelete(false); await handleDeleteSelected(); }} disabled={!deleteBackupReady || deletingSelected}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50">
+                {deletingSelected ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Transfer Dialog */}
+      {transferAgent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setTransferAgent(null)} />
+          <div className="relative bg-card rounded-2xl border border-border w-full max-w-md p-6 shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="font-heading text-lg font-bold text-foreground">Branch Transfer</h2>
+                <p className="text-sm text-muted-foreground">{transferAgent.fullname || transferAgent.full_name} - {transferAgent.branch || transferAgent.branch_name || 'Unassigned'}</p>
+              </div>
+              <button onClick={() => setTransferAgent(null)} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">New Branch</label>
+                <ControlledSelect
+                  value={newBranch}
+                  onChange={setNewBranch}
+                  options={branches}
+                  placeholder="Select new branch"
+                  className={inputClass}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Reason for Transfer</label>
+                <textarea value={reason} onChange={e => setReason(e.target.value)} rows={3} placeholder="e.g. Agent relocated to new branch territory"
+                  className={`${inputClass} resize-none`} />
+              </div>
+              <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+                <p className="text-xs text-muted-foreground">This action will be logged in the audit trail with old branch, new branch, and reason.</p>
+              </div>
+              {error && <p className="text-sm text-red-500">{error}</p>}
+              <div className="flex gap-3">
+                <button onClick={() => setTransferAgent(null)} className="flex-1 bg-muted hover:bg-muted/70 text-foreground text-sm font-medium py-2.5 rounded-lg">Cancel</button>
+                <button onClick={handleTransfer} disabled={saving}
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium py-2.5 rounded-lg flex items-center justify-center gap-2">
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Building2 className="w-4 h-4" />} Transfer
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

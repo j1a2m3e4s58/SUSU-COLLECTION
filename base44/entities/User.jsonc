@@ -1,0 +1,70 @@
+{
+  "name": "User",
+  "type": "object",
+  "properties": {
+    "phone": {
+      "type": "string",
+      "title": "Phone Number"
+    },
+    "branch_id": {
+      "type": "string",
+      "title": "Branch ID"
+    },
+    "branch_name": {
+      "type": "string",
+      "title": "Branch Name"
+    },
+    "agent_code": {
+      "type": "string",
+      "title": "Agent Code"
+    },
+    "supervisor_id": {
+      "type": "string",
+      "title": "Supervisor ID"
+    },
+    "supervisor_name": {
+      "type": "string",
+      "title": "Supervisor Name"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "inactive",
+        "suspended"
+      ],
+      "default": "active",
+      "title": "Status"
+    },
+    "role": {
+      "type": "string",
+      "enum": [
+        "admin",
+        "supervisor",
+        "branch_manager",
+        "susu_agent",
+        "auditor",
+        "viewer"
+      ],
+      "default": "viewer",
+      "title": "Role"
+    },
+    "last_login": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Last Login"
+    },
+    "managed_branches": {
+      "type": "string",
+      "title": "Managed Branches (comma-separated IDs)"
+    },
+    "department": {
+      "type": "string",
+      "title": "Department"
+    },
+    "module_permissions": {
+      "type": "string",
+      "title": "Module Permissions (comma-separated)"
+    }
+  }
+}

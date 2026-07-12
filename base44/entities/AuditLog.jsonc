@@ -1,0 +1,51 @@
+{
+  "name": "AuditLog",
+  "type": "object",
+  "properties": {
+    "user_id": {
+      "type": "string",
+      "title": "User ID"
+    },
+    "user_name": {
+      "type": "string",
+      "title": "User Name"
+    },
+    "user_role": {
+      "type": "string",
+      "title": "User Role"
+    },
+    "action": {
+      "type": "string",
+      "title": "Action"
+    },
+    "module": {
+      "type": "string",
+      "title": "Module"
+    },
+    "description": {
+      "type": "string",
+      "title": "Description"
+    },
+    "old_value": {
+      "type": "string",
+      "title": "Old Value"
+    },
+    "new_value": {
+      "type": "string",
+      "title": "New Value"
+    },
+    "ip_address": {
+      "type": "string",
+      "title": "IP Address"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Timestamp"
+    }
+  },
+  "required": [
+    "action",
+    "module"
+  ]
+}

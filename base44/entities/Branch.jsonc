@@ -1,0 +1,35 @@
+{
+  "name": "Branch",
+  "type": "object",
+  "properties": {
+    "branch_name": {
+      "type": "string",
+      "title": "Branch Name"
+    },
+    "branch_code": {
+      "type": "string",
+      "title": "Branch Code"
+    },
+    "location": {
+      "type": "string",
+      "title": "Location"
+    },
+    "region": {
+      "type": "string",
+      "title": "Region"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "inactive"
+      ],
+      "default": "active",
+      "title": "Status"
+    }
+  },
+  "required": [
+    "branch_name",
+    "branch_code"
+  ]
+}

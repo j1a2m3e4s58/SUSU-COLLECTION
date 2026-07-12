@@ -1,0 +1,72 @@
+{
+  "name": "Correction",
+  "type": "object",
+  "properties": {
+    "collection_id": {
+      "type": "string",
+      "title": "Collection ID"
+    },
+    "transaction_reference": {
+      "type": "string",
+      "title": "Transaction Reference"
+    },
+    "customer_name": {
+      "type": "string",
+      "title": "Customer Name"
+    },
+    "account_number": {
+      "type": "string",
+      "title": "Account Number"
+    },
+    "requested_by": {
+      "type": "string",
+      "title": "Requested By"
+    },
+    "requested_by_name": {
+      "type": "string",
+      "title": "Requested By Name"
+    },
+    "old_amount": {
+      "type": "number",
+      "title": "Old Amount"
+    },
+    "new_amount": {
+      "type": "number",
+      "title": "New Amount"
+    },
+    "reason": {
+      "type": "string",
+      "title": "Reason"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "approved",
+        "rejected"
+      ],
+      "default": "pending",
+      "title": "Status"
+    },
+    "approved_by": {
+      "type": "string",
+      "title": "Approved By"
+    },
+    "approved_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Approved At"
+    },
+    "approver_comment": {
+      "type": "string",
+      "title": "Approver Comment"
+    }
+  },
+  "required": [
+    "collection_id",
+    "requested_by",
+    "old_amount",
+    "new_amount",
+    "reason"
+  ]
+}

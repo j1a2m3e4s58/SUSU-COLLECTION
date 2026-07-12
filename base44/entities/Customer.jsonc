@@ -1,0 +1,58 @@
+{
+  "name": "Customer",
+  "type": "object",
+  "properties": {
+    "account_name": {
+      "type": "string",
+      "title": "Account Name"
+    },
+    "account_number": {
+      "type": "string",
+      "title": "Account Number"
+    },
+    "phone": {
+      "type": "string",
+      "title": "Phone Number"
+    },
+    "branch_id": {
+      "type": "string",
+      "title": "Branch ID"
+    },
+    "branch_name": {
+      "type": "string",
+      "title": "Branch Name"
+    },
+    "assigned_agent_id": {
+      "type": "string",
+      "title": "Assigned Agent ID"
+    },
+    "assigned_agent_name": {
+      "type": "string",
+      "title": "Assigned Agent Name"
+    },
+    "customer_status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "inactive",
+        "suspended"
+      ],
+      "default": "active",
+      "title": "Customer Status"
+    },
+    "last_deposit_date": {
+      "type": "string",
+      "format": "date",
+      "title": "Last Deposit Date"
+    },
+    "total_deposits": {
+      "type": "number",
+      "default": 0,
+      "title": "Total Deposits"
+    }
+  },
+  "required": [
+    "account_name",
+    "account_number"
+  ]
+}

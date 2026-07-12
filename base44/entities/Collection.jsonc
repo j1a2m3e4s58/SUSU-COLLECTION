@@ -1,0 +1,109 @@
+{
+  "name": "Collection",
+  "type": "object",
+  "properties": {
+    "transaction_reference": {
+      "type": "string",
+      "title": "Transaction Reference"
+    },
+    "customer_id": {
+      "type": "string",
+      "title": "Customer ID"
+    },
+    "account_name": {
+      "type": "string",
+      "title": "Account Name"
+    },
+    "account_number": {
+      "type": "string",
+      "title": "Account Number"
+    },
+    "amount": {
+      "type": "number",
+      "title": "Amount"
+    },
+    "agent_id": {
+      "type": "string",
+      "title": "Agent ID"
+    },
+    "agent_name": {
+      "type": "string",
+      "title": "Agent Name"
+    },
+    "agent_code": {
+      "type": "string",
+      "title": "Agent Code"
+    },
+    "branch_id": {
+      "type": "string",
+      "title": "Branch ID"
+    },
+    "branch_name": {
+      "type": "string",
+      "title": "Branch Name"
+    },
+    "transaction_date": {
+      "type": "string",
+      "format": "date",
+      "title": "Transaction Date"
+    },
+    "transaction_time": {
+      "type": "string",
+      "title": "Transaction Time"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Full Timestamp"
+    },
+    "recorded_by": {
+      "type": "string",
+      "title": "Recorded By"
+    },
+    "location_note": {
+      "type": "string",
+      "title": "Location Note"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "pending",
+        "reversed"
+      ],
+      "default": "completed",
+      "title": "Status"
+    },
+    "supervisor_review_status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "approved",
+        "queried",
+        "rejected"
+      ],
+      "default": "pending",
+      "title": "Supervisor Review Status"
+    },
+    "supervisor_comment": {
+      "type": "string",
+      "title": "Supervisor Comment"
+    },
+    "is_correction": {
+      "type": "boolean",
+      "default": false,
+      "title": "Is Correction"
+    },
+    "original_amount": {
+      "type": "number",
+      "title": "Original Amount (if corrected)"
+    }
+  },
+  "required": [
+    "transaction_reference",
+    "customer_id",
+    "amount",
+    "agent_id",
+    "transaction_date"
+  ]
+}

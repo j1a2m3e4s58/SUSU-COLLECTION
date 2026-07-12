@@ -1,0 +1,88 @@
+{
+  "name": "DailyClosing",
+  "type": "object",
+  "properties": {
+    "agent_id": {
+      "type": "string",
+      "title": "Agent ID"
+    },
+    "agent_name": {
+      "type": "string",
+      "title": "Agent Name"
+    },
+    "agent_code": {
+      "type": "string",
+      "title": "Agent Code"
+    },
+    "branch_id": {
+      "type": "string",
+      "title": "Branch ID"
+    },
+    "branch_name": {
+      "type": "string",
+      "title": "Branch Name"
+    },
+    "closing_date": {
+      "type": "string",
+      "format": "date",
+      "title": "Closing Date"
+    },
+    "total_amount": {
+      "type": "number",
+      "default": 0,
+      "title": "Total Amount"
+    },
+    "total_transactions": {
+      "type": "number",
+      "default": 0,
+      "title": "Total Transactions"
+    },
+    "total_customers": {
+      "type": "number",
+      "default": 0,
+      "title": "Total Customers"
+    },
+    "highest_deposit": {
+      "type": "number",
+      "default": 0,
+      "title": "Highest Deposit"
+    },
+    "lowest_deposit": {
+      "type": "number",
+      "default": 0,
+      "title": "Lowest Deposit"
+    },
+    "submitted_by": {
+      "type": "string",
+      "title": "Submitted By"
+    },
+    "supervisor_status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "approved",
+        "rejected",
+        "queried"
+      ],
+      "default": "pending",
+      "title": "Supervisor Status"
+    },
+    "supervisor_comment": {
+      "type": "string",
+      "title": "Supervisor Comment"
+    },
+    "approved_by": {
+      "type": "string",
+      "title": "Approved By"
+    },
+    "approved_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Approved At"
+    }
+  },
+  "required": [
+    "agent_id",
+    "closing_date"
+  ]
+}

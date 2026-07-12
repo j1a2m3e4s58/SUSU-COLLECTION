@@ -1,0 +1,77 @@
+{
+  "name": "Staff",
+  "type": "object",
+  "properties": {
+    "full_name": {
+      "type": "string",
+      "title": "Full Name"
+    },
+    "email": {
+      "type": "string",
+      "title": "Email"
+    },
+    "department": {
+      "type": "string",
+      "title": "Department"
+    },
+    "role": {
+      "type": "string",
+      "enum": [
+        "admin",
+        "supervisor",
+        "branch_manager",
+        "susu_agent",
+        "auditor",
+        "viewer",
+        "staff"
+      ],
+      "default": "staff",
+      "title": "Role"
+    },
+    "workplace": {
+      "type": "string",
+      "title": "Workplace / Location"
+    },
+    "branch_id": {
+      "type": "string",
+      "title": "Assigned Branch ID"
+    },
+    "branch_name": {
+      "type": "string",
+      "title": "Assigned Branch Name"
+    },
+    "agent_code": {
+      "type": "string",
+      "title": "Agent Code"
+    },
+    "supervisor_name": {
+      "type": "string",
+      "title": "Supervisor Name"
+    },
+    "managed_branches": {
+      "type": "string",
+      "title": "Managed Branches (comma-separated IDs)"
+    },
+    "module_permissions": {
+      "type": "string",
+      "title": "Module Permissions (comma-separated)"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "inactive",
+        "suspended"
+      ],
+      "default": "active",
+      "title": "Status"
+    },
+    "user_id": {
+      "type": "string",
+      "title": "Linked User ID"
+    }
+  },
+  "required": [
+    "full_name"
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "name": "Notification",
+  "type": "object",
+  "properties": {
+    "user_id": {
+      "type": "string",
+      "title": "User ID"
+    },
+    "title": {
+      "type": "string",
+      "title": "Title"
+    },
+    "message": {
+      "type": "string",
+      "title": "Message"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "info",
+        "warning",
+        "alert",
+        "success"
+      ],
+      "default": "info",
+      "title": "Type"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "unread",
+        "read"
+      ],
+      "default": "unread",
+      "title": "Status"
+    },
+    "related_module": {
+      "type": "string",
+      "title": "Related Module"
+    },
+    "related_id": {
+      "type": "string",
+      "title": "Related ID"
+    }
+  },
+  "required": [
+    "title",
+    "message"
+  ]
+}
