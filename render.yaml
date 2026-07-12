@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: susu-collection-portal
+    runtime: python
+    plan: free
+    branch: main
+    buildCommand: pip install -r mail-api/requirements.txt && npm ci && npm run build && rm -rf mail-api/public && cp -R dist mail-api/public
+    startCommand: cd mail-api && gunicorn app:app --bind 0.0.0.0:$PORT
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: PORTAL_DATA_DIR
+        value: /opt/render/project/src/mail-api/data
+      - key: VITE_MAIL_API_URL
+        value: /api
+      - key: PORTAL_PUBLIC_URL
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: MAIL_SERVER
+        sync: false
+      - key: MAIL_PORT
+        value: 465
+      - key: MAIL_USERNAME
+        sync: false
+      - key: MAIL_PASSWORD
+        sync: false
+      - key: MAIL_DEFAULT_SENDER
+        sync: false
+      - key: PORTAL_DEFAULT_INITIAL_PASSWORD
+        sync: false
