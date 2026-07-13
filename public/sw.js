@@ -1,6 +1,5 @@
-const CACHE_NAME = "susu-portal-shell-v3";
+const CACHE_NAME = "susu-portal-shell-v4";
 const APP_SHELL = [
-  "/",
   "/manifest.json",
   "/favicon.svg",
   "/assets/icons/icon-192.png",
@@ -27,6 +26,11 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const requestUrl = new URL(event.request.url);
   if (requestUrl.pathname.startsWith("/mail-api") || event.request.method !== "GET") return;
+
+  if (event.request.mode === "navigate" || event.request.destination === "document") {
+    event.respondWith(fetch(event.request).catch(() => caches.match("/")));
+    return;
+  }
 
   event.respondWith(
     caches.match(event.request).then((cached) => {
