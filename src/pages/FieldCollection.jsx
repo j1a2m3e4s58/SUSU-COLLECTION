@@ -307,7 +307,7 @@ export default function FieldCollection() {
           )}
 
           <div>
-            <label className="text-sm font-medium text-foreground mb-2 block">Deposit Amount (GHS )</label>
+            <label className="text-sm font-medium text-foreground mb-2 block">Deposit Amount (GHS)</label>
             <div className="relative">
               <HandCoins className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
               <input type="number" min="0" step="0.01" value={amount} onChange={e => setAmount(e.target.value)}

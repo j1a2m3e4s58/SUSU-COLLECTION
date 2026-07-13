@@ -201,6 +201,10 @@ export default function PortalControl() {
       setError("Open Portal Control from the sidebar and enter the password first.");
       return;
     }
+    if ((settings?.appMode || "test") !== "live" && draft.appMode === "live" && !clearBackupReady) {
+      setError("Export a backup before switching the portal to Live Mode.");
+      return;
+    }
 
     const payload = {
       ...draft,
@@ -395,6 +399,23 @@ export default function PortalControl() {
         <p className="mt-3 text-xs text-muted-foreground">
           Clear Test Data unlocks only after exporting a backup and only while the portal is in Test Mode.
         </p>
+      </section>
+
+      <section className="rounded-xl border border-emerald-500/20 bg-card p-5">
+        <h2 className="font-heading text-base font-bold text-foreground">Ready For Real Testing</h2>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {[
+            ["Backup", "Export a full backup before Live Mode and before deleting records."],
+            ["Roles", "Test Owner, Supervisor, and SUSU AGENT accounts separately."],
+            ["Imports", "Upload customer CSV/Excel with 13-digit account numbers only."],
+            ["Storage", "Confirm Render has persistent disk/database before real deposits."],
+          ].map(([title, text]) => (
+            <div key={title} className="rounded-xl border border-border bg-background/60 p-3">
+              <p className="text-sm font-semibold text-foreground">{title}</p>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">{text}</p>
+            </div>
+          ))}
+        </div>
       </section>
 
       <section className="rounded-xl border border-border bg-card p-5">

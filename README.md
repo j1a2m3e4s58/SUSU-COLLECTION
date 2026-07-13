@@ -68,6 +68,21 @@ After pushing your changes to git, open the Base44 dashboard and publish the app
 base44 dashboard open
 ```
 
+## SUSU Portal Production Readiness
+
+Before using the portal for real deposits:
+
+1. Export a full backup from **Portal Control**.
+2. Confirm the deployed backend uses persistent storage. On Render, attach a persistent disk or a real database before collecting live deposits.
+3. Test these accounts separately: Owner Admin, Supervisor, and SUSU AGENT.
+4. Test customer import with CSV/XLSX columns: `Account Name`, `Account Number`, `Branch`.
+5. Confirm every customer account number is exactly 13 digits.
+6. Confirm SUSU AGENT users can record deposits only by exact account number search.
+7. Confirm supervisors can see and manage only their branch agents/customers.
+8. Switch **Test Mode** to **Live Mode** only after backup and role testing are complete.
+
+For Render deploys, push to GitHub and use **Manual Deploy -> Deploy latest commit** if automatic deploy does not start.
+
 ## Docs & Support
 
 Documentation: [https://docs.base44.com/Integrations/Using-GitHub](https://docs.base44.com/Integrations/Using-GitHub)

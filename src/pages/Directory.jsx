@@ -237,8 +237,23 @@ export default function Directory() {
 
   const scopedStaff = staff;
   const onlineCount = scopedStaff.filter((member) => member.isOnlineNow).length;
-  const canAdminDirectory = user?.role === "OwnerAdmin";
   const canOwnerControl = user?.role === "OwnerAdmin";
+  const managedBranches = Array.isArray(user?.managedBranches) && user.managedBranches.length
+    ? user.managedBranches
+    : [user?.branch].filter(Boolean);
+  const scopedBranchOptions = branches.filter((item) => managedBranches.includes(item));
+  const addAgentBranches = canOwnerControl ? branches : (scopedBranchOptions.length ? scopedBranchOptions : managedBranches);
+  const canAddAgentUser = canOwnerControl || (user?.role === "Supervisor" && addAgentBranches.length > 0);
+  const canManageMember = (member) => {
+    if (!member || member.id === user?.id || ["OwnerAdmin", "SuperAdmin"].includes(member.role)) return false;
+    if (canOwnerControl) return true;
+    const memberBranch = member.branch || member.branch_name;
+    return (
+      user?.role === "Supervisor" &&
+      String(member.department || "").trim().toUpperCase() === "SUSU AGENT" &&
+      managedBranches.includes(memberBranch)
+    );
+  };
   const branchOnline = branches.map((item) => ({
     branch: item,
     total: scopedStaff.filter((member) => member.branch === item).length,
@@ -310,7 +325,7 @@ export default function Directory() {
         username: "",
         temporaryPassword: "",
         phone: "",
-        branch: branches[0] || "",
+        branch: addAgentBranches[0] || "",
       });
     } catch (err) {
       setError(err.message || "Could not add this agent.");
@@ -334,7 +349,7 @@ export default function Directory() {
             See active staff, branch coverage, and who is online now.
           </p>
         </div>
-        {canAdminDirectory && (
+        {(canOwnerControl || canAddAgentUser) && (
           <div className="flex flex-wrap gap-2">
             {canOwnerControl && (
               <Link to="/past-staff">
@@ -344,25 +359,29 @@ export default function Directory() {
                 </Button>
               </Link>
             )}
-            <Link to="/supervisor-management">
-              <Button className="gap-2">
-                <ShieldCheck className="h-4 w-4" />
-                Supervisor Management
+            {canOwnerControl && (
+              <Link to="/supervisor-management">
+                <Button className="gap-2">
+                  <ShieldCheck className="h-4 w-4" />
+                  Supervisor Management
+                </Button>
+              </Link>
+            )}
+            {canAddAgentUser && (
+              <Button
+                type="button"
+                variant="outline"
+                className="gap-2"
+                onClick={() => {
+                  setAgentForm((current) => ({ ...current, branch: current.branch || addAgentBranches[0] || "" }));
+                  setError("");
+                  setShowAddAgent(true);
+                }}
+              >
+                <UserPlus className="h-4 w-4" />
+                Add User
               </Button>
-            </Link>
-            <Button
-              type="button"
-              variant="outline"
-              className="gap-2"
-              onClick={() => {
-                setAgentForm((current) => ({ ...current, branch: current.branch || branches[0] || "" }));
-                setError("");
-                setShowAddAgent(true);
-              }}
-            >
-              <UserPlus className="h-4 w-4" />
-              Add User
-            </Button>
+            )}
           </div>
         )}
       </div>
@@ -469,8 +488,9 @@ export default function Directory() {
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {members.map((member) => {
                   const photo = resolveAssetUrl(member.imageFile);
-                  const canArchive = canAdminDirectory && member.id !== user?.id && !["OwnerAdmin", "SuperAdmin"].includes(member.role);
-                  const canRemove = canAdminDirectory && member.id !== user?.id && !["OwnerAdmin", "SuperAdmin"].includes(member.role);
+                  const canEdit = canManageMember(member);
+                  const canArchive = canOwnerControl && canEdit;
+                  const canRemove = canEdit;
                   return (
                     <div key={member.id} className="flex h-[198px] flex-col gap-2 overflow-hidden rounded-xl border border-border bg-card p-3 shadow-sm transition-transform hover:-translate-y-0.5 sm:h-[238px] sm:gap-3 sm:p-4">
                       <div className="flex items-start gap-3">
@@ -535,8 +555,10 @@ export default function Directory() {
                         </a>
                       </div>
 
-                      {canAdminDirectory && (
-                        <div className="grid h-8 shrink-0 grid-cols-3 gap-2 border-t border-border pt-1 sm:h-9">
+                      {canEdit && (
+                        <div className={`grid h-8 shrink-0 gap-2 border-t border-border pt-1 sm:h-9 ${
+                          canArchive && canRemove ? "grid-cols-3" : canRemove ? "grid-cols-2" : "grid-cols-1"
+                        }`}>
                           <Button
                             type="button"
                             variant="outline"
@@ -649,7 +671,7 @@ export default function Directory() {
                   <SelectValue placeholder="Select branch" />
                 </SelectTrigger>
                 <SelectContent>
-                  {branches.map((item) => (
+                  {addAgentBranches.map((item) => (
                     <SelectItem key={item} value={item}>
                       {item}
                     </SelectItem>

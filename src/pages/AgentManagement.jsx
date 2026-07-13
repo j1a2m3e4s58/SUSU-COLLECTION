@@ -107,7 +107,10 @@ export default function AgentManagement() {
       setTransferAgent(null); setNewBranch(''); setReason('');
       setTimeout(() => setSuccess(''), 4000);
       const refreshed = await getActiveStaff();
-      setStaff((refreshed || []).filter(x => String(x.department || '').trim().toUpperCase() === 'SUSU AGENT'));
+      setStaff((refreshed || []).filter(x =>
+        String(x.department || '').trim().toUpperCase() === 'SUSU AGENT' &&
+        (isOwner || supervisorBranches.includes(x.branch || x.branch_name))
+      ));
     } catch { setError('Failed to transfer agent. Please try again.'); }
     setSaving(false);
   };
@@ -329,6 +332,11 @@ export default function AgentManagement() {
               className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700">
               <Upload className="h-4 w-4" />
               Import Customers
+            </button>
+            <button onClick={exportDeleteBackup} disabled={exportingBackup}
+              className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50">
+              {exportingBackup ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              Export Backup
             </button>
             {selectedIds.size > 0 && (
               <button onClick={() => { setDeleteBackupReady(false); setConfirmDelete(true); }} disabled={deletingSelected}
