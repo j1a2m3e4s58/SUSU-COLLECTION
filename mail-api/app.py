@@ -4005,6 +4005,33 @@ def auth_agent_login():
         return jsonify({"error": str(exc)}), 400
 
 
+@app.route("/api/auth/agent-verify-phone", methods=["POST", "OPTIONS"])
+def auth_agent_verify_phone():
+    preflight = handle_options()
+    if preflight:
+        return preflight
+    data, error = require_json()
+    if error:
+        return error
+    try:
+        username = normalize_agent_username(data.get("username"))
+        temp_password = str(data.get("temporaryPassword") or "")
+        phone = normalize_phone(data.get("phone"))
+        users = load_user_store()
+        user = find_user_by_username(users, username)
+        passwords = load_password_store()
+        stored_password = passwords.get(agent_password_key(username))
+        if not user or not stored_password or not verify_password(stored_password, temp_password):
+            return jsonify({"error": "Invalid username or temporary password."}), 401
+        if user["isArchived"] or not user["isActive"]:
+            return jsonify({"error": "Invalid username or password"}), 401
+        if "".join(ch for ch in str(user.get("phone") or "") if ch.isdigit()) != "".join(ch for ch in phone if ch.isdigit()):
+            return jsonify({"error": "Phone number does not match the supervisor record."}), 400
+        return jsonify({"ok": True, "message": "Verification token ready."})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
 @app.route("/api/auth/agent-complete-setup", methods=["POST", "OPTIONS"])
 def auth_agent_complete_setup():
     preflight = handle_options()

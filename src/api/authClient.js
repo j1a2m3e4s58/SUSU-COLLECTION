@@ -52,6 +52,14 @@ export async function loginAgentWithUsername(username, password) {
   return storeAuthUser(data.user, data.sessionToken);
 }
 
+export async function verifyAgentSetupPhone(payload) {
+  return request("/auth/agent-verify-phone", {
+    username: payload.username,
+    temporaryPassword: payload.temporaryPassword,
+    phone: payload.phone,
+  });
+}
+
 export async function completeAgentSetup(payload) {
   const data = await request("/auth/agent-complete-setup", {
     username: payload.username,
