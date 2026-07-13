@@ -18,6 +18,7 @@ import {
   getPortalSettings,
   getStoredPortalControlPassword,
   importBackup,
+  removeTestCustomers,
   seedTestCustomers,
   updatePortalSettings,
 } from "@/api/portalClient";
@@ -170,6 +171,7 @@ export default function PortalControl() {
   const [importing, setImporting] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [seedingCustomers, setSeedingCustomers] = useState(false);
+  const [removingTestCustomers, setRemovingTestCustomers] = useState(false);
   const [clearBackupReady, setClearBackupReady] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -332,6 +334,24 @@ export default function PortalControl() {
     }
   };
 
+  const clearOnlyTestCustomers = async () => {
+    if (draft.appMode !== "test") {
+      setError("Switch to Test Mode before removing test customers.");
+      return;
+    }
+    setRemovingTestCustomers(true);
+    setError("");
+    setSuccess("");
+    try {
+      const result = await removeTestCustomers();
+      setSuccess(`Removed ${result.removedCount || 0} test customer(s). Real customers were left untouched.`);
+    } catch (err) {
+      setError(err.message || "Could not remove test customers.");
+    } finally {
+      setRemovingTestCustomers(false);
+    }
+  };
+
   if (loading) {
     return <div className="h-64 animate-pulse rounded-xl border border-border bg-card" />;
   }
@@ -417,6 +437,10 @@ export default function PortalControl() {
               <ListPlus className="h-4 w-4" />
               {seedingCustomers ? "Loading..." : "Load Test Customers"}
             </Button>
+            <Button type="button" variant="outline" className="gap-2 bg-background/70 text-destructive hover:text-destructive" onClick={clearOnlyTestCustomers} disabled={removingTestCustomers || draft.appMode !== "test"}>
+              <X className="h-4 w-4" />
+              {removingTestCustomers ? "Removing..." : "Remove Test Customers"}
+            </Button>
             <Button type="button" variant="destructive" className="gap-2" onClick={clearTestingData} disabled={clearing || !clearBackupReady || draft.appMode !== "test"}>
               <Trash2 className="h-4 w-4" />
               {clearing ? "Clearing..." : "Clear Test Data"}
@@ -435,13 +459,16 @@ export default function PortalControl() {
             ["Backup", "Export a full backup before Live Mode and before deleting records."],
             ["Roles", "Test Owner, Supervisor, and SUSU AGENT accounts separately."],
             ["Imports", "Upload customer CSV/Excel with 13-digit account numbers only."],
-            ["Storage", "Confirm Render has persistent disk/database before real deposits."],
+            ["Storage", "Confirm Render has persistent disk or a real database before real deposits."],
           ].map(([title, text]) => (
             <div key={title} className="rounded-xl border border-border bg-background/60 p-3">
               <p className="text-sm font-semibold text-foreground">{title}</p>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">{text}</p>
             </div>
           ))}
+        </div>
+        <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
+          Live Mode should only be used after backup export and persistent storage are confirmed in Render. Without persistent storage, customer and deposit records can disappear after redeploy or restart.
         </div>
       </section>
 

@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { createAgentAccount, createAuditLog, deleteStaff, exportBackup, getActiveStaff, getCollections, getPortalSettings, importCustomers, resetAgentPassword, updateStaff } from '@/api/portalClient';
+import { createAgentAccount, createAuditLog, deleteStaff, exportBackup, getActiveStaff, getCollections, getPortalSettings, importCustomers, reopenDailyCollections, resetAgentPassword, updateStaff } from '@/api/portalClient';
 import ControlledSelect from '@/components/ui/controlled-select';
 import { useAuth } from '@/lib/AuthContext';
+import { useWorkDate } from '@/lib/WorkDateContext';
 import { exportHtmlPdf } from '@/lib/pdfExport';
-import { UserCog, Search, Building2, X, AlertCircle, Loader2, Trash2, FileText, Download, Plus, Upload, KeyRound } from 'lucide-react';
+import { UserCog, Search, Building2, X, AlertCircle, Loader2, Trash2, FileText, Download, Plus, Upload, KeyRound, LockKeyhole } from 'lucide-react';
 
 export default function AgentManagement() {
   const { user } = useAuth();
+  const { selectedDate, selectedScope } = useWorkDate();
   const [staff, setStaff] = useState([]);
   const [branches, setBranches] = useState([]);
   const [collections, setCollections] = useState([]);
@@ -30,8 +32,10 @@ export default function AgentManagement() {
   const [agentForm, setAgentForm] = useState({ fullname: '', username: '', temporaryPassword: '', phone: '', branch: '' });
   const [resetUsername, setResetUsername] = useState('');
   const [resetPassword, setResetPassword] = useState('');
+  const [reopeningAgentId, setReopeningAgentId] = useState('');
   const [importBranch, setImportBranch] = useState('');
   const [importRows, setImportRows] = useState([]);
+  const [importInvalidRows, setImportInvalidRows] = useState([]);
   const [importFileName, setImportFileName] = useState('');
   const [importSummary, setImportSummary] = useState(null);
 
@@ -255,17 +259,50 @@ export default function AgentManagement() {
     }
   };
 
-  const normalizeImportRow = (row) => {
+  const handleReopenDay = async (agent) => {
+    if (selectedScope !== 'day') {
+      setError('Select a specific day before reopening collections.');
+      return;
+    }
+    setReopeningAgentId(agent.id);
+    setError('');
+    try {
+      const result = await reopenDailyCollections(selectedDate, agent.id);
+      setSuccess(result.removedCount ? `Reopened ${selectedDate} for ${agent.fullname || agent.full_name}.` : `No closed day found for ${agent.fullname || agent.full_name} on ${selectedDate}.`);
+      setTimeout(() => setSuccess(''), 5000);
+    } catch (err) {
+      setError(err.message || 'Could not reopen this agent day.');
+    } finally {
+      setReopeningAgentId('');
+    }
+  };
+
+  const normalizeImportRow = (row, rowNumber) => {
     const find = (...keys) => {
       const entries = Object.entries(row || {});
       const match = entries.find(([key]) => keys.includes(String(key).trim().toLowerCase()));
       return match ? String(match[1] ?? '').trim().replace(/\.0$/, '') : '';
     };
-    return {
+    const normalized = {
+      rowNumber,
       account_name: find('account name', 'account_name', 'name', 'customer name'),
       account_number: find('account number', 'account_number', 'account no', 'account no.', 'account'),
       branch: find('branch', 'branch name') || importBranch,
     };
+    const errors = [];
+    if (!normalized.account_name) errors.push('Account name missing');
+    if (!/^\d{13}$/.test(normalized.account_number)) errors.push('Account number must be exactly 13 digits');
+    if (!normalized.branch) errors.push('Branch missing');
+    return { ...normalized, errors };
+  };
+
+  const downloadCustomerTemplate = () => {
+    const worksheet = XLSX.utils.json_to_sheet([
+      { 'Account Name': 'TEST AMA MENSAH', 'Account Number': '131000100001', Branch: scopedBranches[0] || 'BAWJIASE' },
+    ]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Customer Template');
+    XLSX.writeFile(workbook, 'susu_customer_import_template.xlsx');
   };
 
   const handleImportFile = async (event) => {
@@ -278,10 +315,13 @@ export default function AgentManagement() {
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: 'array' });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' }).map(normalizeImportRow)
-        .filter((row) => row.account_name && row.account_number);
-      setImportRows(rows);
-      if (!rows.length) setError('No valid rows found. Use columns: Account Name, Account Number, Branch.');
+      const parsedRows = XLSX.utils.sheet_to_json(sheet, { defval: '' })
+        .map((row, index) => normalizeImportRow(row, index + 2));
+      const validRows = parsedRows.filter((row) => row.errors.length === 0);
+      const invalidRows = parsedRows.filter((row) => row.errors.length > 0);
+      setImportRows(validRows);
+      setImportInvalidRows(invalidRows);
+      if (!validRows.length) setError('No valid rows found. Use columns: Account Name, Account Number, Branch.');
     } catch (err) {
       setError(err.message || 'Could not read the upload file.');
     } finally {
@@ -299,6 +339,7 @@ export default function AgentManagement() {
       setImportSummary(result);
       setSuccess(`${result.createdCount || 0} customer(s) imported.`);
       setImportRows([]);
+      setImportInvalidRows([]);
       setImportFileName('');
       await refreshData();
     } catch (err) {
@@ -399,6 +440,10 @@ export default function AgentManagement() {
                           className="inline-flex items-center gap-1 bg-blue-500/10 text-blue-500 text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-blue-500/20 transition-colors">
                           <Building2 className="w-3 h-3" /> Reassign
                         </button>
+                        <button onClick={() => handleReopenDay(a)} disabled={reopeningAgentId === a.id}
+                          className="inline-flex items-center gap-1 bg-emerald-500/10 text-emerald-600 text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-emerald-500/20 transition-colors disabled:opacity-50">
+                          <LockKeyhole className="w-3 h-3" /> {reopeningAgentId === a.id ? 'Reopening...' : 'Reopen Day'}
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -436,6 +481,10 @@ export default function AgentManagement() {
                     <button onClick={() => { setTransferAgent(a); setNewBranch(''); setReason(''); setError(''); }}
                       className="rounded-lg bg-blue-500/10 px-3 py-1.5 text-xs font-medium text-blue-500">
                       Reassign
+                    </button>
+                    <button onClick={() => handleReopenDay(a)} disabled={reopeningAgentId === a.id}
+                      className="rounded-lg bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-600 disabled:opacity-50">
+                      {reopeningAgentId === a.id ? 'Reopening...' : 'Reopen Day'}
                     </button>
                   </div>
                 </div>
@@ -539,17 +588,32 @@ export default function AgentManagement() {
             </div>
             <div className="space-y-4">
               <ControlledSelect value={importBranch} onChange={setImportBranch} options={scopedBranches} placeholder="Import branch" className={inputClass} />
+              <button type="button" onClick={downloadCustomerTemplate} className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-background/70 px-4 py-2 text-sm font-medium text-foreground hover:bg-muted">
+                <Download className="h-4 w-4" />
+                Download Customer Template
+              </button>
               <label className="flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-border bg-muted/30 p-5 text-center hover:bg-muted/50">
                 <Upload className="mb-2 h-6 w-6 text-blue-500" />
                 <span className="text-sm font-medium text-foreground">{importFileName || 'Choose CSV / Excel file'}</span>
-                <span className="mt-1 text-xs text-muted-foreground">{importRows.length ? `${importRows.length} valid row(s) ready` : 'Accepted: .csv, .xlsx, .xls'}</span>
+                <span className="mt-1 text-xs text-muted-foreground">{importRows.length || importInvalidRows.length ? `${importRows.length} valid, ${importInvalidRows.length} skipped` : 'Accepted: .csv, .xlsx, .xls'}</span>
                 <input type="file" accept=".csv,.xlsx,.xls" onChange={handleImportFile} className="hidden" />
               </label>
               {importRows.length > 0 && (
-                <div className="max-h-32 overflow-y-auto rounded-lg border border-border bg-background/50 p-2 text-xs">
+                <div className="max-h-36 overflow-y-auto rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2 text-xs">
+                  <p className="mb-1 font-semibold text-emerald-600">Valid rows preview</p>
                   {importRows.slice(0, 5).map((row, index) => (
                     <p key={index} className="truncate text-muted-foreground">{row.account_number} - {row.account_name} - {row.branch || importBranch}</p>
                   ))}
+                  {importRows.length > 5 && <p className="mt-1 text-muted-foreground">+ {importRows.length - 5} more valid row(s)</p>}
+                </div>
+              )}
+              {importInvalidRows.length > 0 && (
+                <div className="max-h-32 overflow-y-auto rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-xs">
+                  <p className="mb-1 font-semibold text-amber-600">Skipped rows</p>
+                  {importInvalidRows.slice(0, 6).map((row) => (
+                    <p key={row.rowNumber} className="truncate text-muted-foreground">Row {row.rowNumber}: {row.errors.join(', ')}</p>
+                  ))}
+                  {importInvalidRows.length > 6 && <p className="mt-1 text-muted-foreground">+ {importInvalidRows.length - 6} more skipped row(s)</p>}
                 </div>
               )}
               {importSummary && (

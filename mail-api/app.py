@@ -47,6 +47,8 @@ VERIFICATION_TTL_SECONDS = 15 * 60
 SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 TRAINING_REMINDER_COOLDOWN_SECONDS = 24 * 60 * 60
 PORTAL_CONTROL_PASSWORD = "T4n4AMEg8f52468"
+RATE_LIMIT_WINDOW_SECONDS = 15 * 60
+RATE_LIMIT_MAX_ATTEMPTS = 8
 DEFAULT_PORTAL_BRANCHES = [
     "HEAD OFFICE",
     "BAWJIASE",
@@ -287,6 +289,7 @@ INITIAL_USERS = [
 app = Flask(__name__, static_folder=None)
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(UPLOADS_DIR, exist_ok=True)
+FAILED_AUTH_ATTEMPTS: dict[str, list[int]] = {}
 
 
 @app.before_request
@@ -1243,6 +1246,68 @@ def request_ip_address() -> str:
     return str(request.remote_addr or "unknown")
 
 
+def rate_limit_key(scope: str, identifier: object) -> str:
+    return f"{scope}:{request_ip_address()}:{str(identifier or '').strip().lower()}"
+
+
+def auth_rate_limited(key: str) -> bool:
+    cutoff = now_seconds() - RATE_LIMIT_WINDOW_SECONDS
+    attempts = [stamp for stamp in FAILED_AUTH_ATTEMPTS.get(key, []) if stamp >= cutoff]
+    FAILED_AUTH_ATTEMPTS[key] = attempts
+    return len(attempts) >= RATE_LIMIT_MAX_ATTEMPTS
+
+
+def record_auth_failure(key: str) -> None:
+    cutoff = now_seconds() - RATE_LIMIT_WINDOW_SECONDS
+    attempts = [stamp for stamp in FAILED_AUTH_ATTEMPTS.get(key, []) if stamp >= cutoff]
+    attempts.append(now_seconds())
+    FAILED_AUTH_ATTEMPTS[key] = attempts[-RATE_LIMIT_MAX_ATTEMPTS:]
+
+
+def clear_auth_failures(key: str) -> None:
+    FAILED_AUTH_ATTEMPTS.pop(key, None)
+
+
+def compact_audit_target(target: object) -> str:
+    if isinstance(target, str):
+        return target
+    if not isinstance(target, dict):
+        return json.dumps(target, ensure_ascii=True, sort_keys=True)
+    parts = []
+    for key in [
+        "customerId",
+        "collectionId",
+        "accountNumber",
+        "accountName",
+        "staffId",
+        "staffName",
+        "email",
+        "username",
+        "branch",
+        "date",
+        "amount",
+        "createdCount",
+        "skippedCount",
+        "created",
+        "skipped",
+        "action",
+        "reason",
+    ]:
+        if key in target and target.get(key) not in (None, "", [], {}):
+            parts.append(f"{key}: {target.get(key)}")
+    before = target.get("before")
+    after = target.get("after")
+    if isinstance(before, dict) and isinstance(after, dict):
+        changed = [
+            key
+            for key in sorted(set(before.keys()) | set(after.keys()))
+            if before.get(key) != after.get(key) and key not in {"lastSeen", "updatedAt"}
+        ]
+        if changed:
+            parts.append(f"changed: {', '.join(changed[:8])}")
+    return "; ".join(parts) or json.dumps(target, ensure_ascii=True, sort_keys=True)
+
+
 def load_audit_logs_store() -> list[dict]:
     items = load_json_list_store(AUDIT_LOGS_STORE_PATH)
     normalized = []
@@ -1279,11 +1344,7 @@ def record_audit_log(
     ip_address: str | None = None,
 ) -> dict:
     logs = load_audit_logs_store()
-    target_text = (
-        target
-        if isinstance(target, str)
-        else json.dumps(target, ensure_ascii=True, sort_keys=True)
-    )
+    target_text = compact_audit_target(target)
     entry = {
         "id": next_content_id(logs, floor=1),
         "actorId": str(actor.get("id", "system") if actor else "system"),
@@ -2798,6 +2859,27 @@ def clear_test_data():
     return jsonify({"ok": True})
 
 
+@app.route("/api/maintenance/remove-test-customers", methods=["POST", "OPTIONS"])
+def remove_test_customers():
+    preflight = handle_options()
+    if preflight:
+        return preflight
+    _, auth_user, error = require_owner_admin()
+    if error:
+        return error
+    settings = load_portal_settings_store()
+    if str(settings.get("appMode", "test")).lower() != "test":
+        return jsonify({"error": "Switch the portal to Test Mode before removing test customers."}), 400
+    customers = load_json_list_store(CUSTOMERS_STORE_PATH)
+    before_count = len(customers)
+    filtered = [item for item in customers if not bool(item.get("isTestData"))]
+    removed_count = before_count - len(filtered)
+    if removed_count:
+        save_json_list_store(CUSTOMERS_STORE_PATH, filtered)
+    record_audit_log(auth_user, "REMOVE_TEST_CUSTOMERS", {"removedCount": removed_count})
+    return jsonify({"ok": True, "removedCount": removed_count})
+
+
 @app.route("/api/maintenance/seed-test-customers", methods=["POST", "OPTIONS"])
 def seed_test_customers():
     preflight = handle_options()
@@ -2908,6 +2990,51 @@ def close_daily_collections():
         link_to="/reports",
     )
     return jsonify({"ok": True, "close": close})
+
+
+@app.route("/api/daily-close/reopen", methods=["POST", "OPTIONS"])
+def reopen_daily_collections():
+    preflight = handle_options()
+    if preflight:
+        return preflight
+    _, auth_user, error = require_authenticated_user()
+    if error:
+        return error
+    if auth_user.get("role") not in {"OwnerAdmin", "Supervisor"}:
+        return jsonify({"error": "Only supervisors or owner admin can reopen a closed collection day."}), 403
+    data, error = require_json()
+    if error:
+        return error
+    date_key = str(data.get("date") or "").strip()
+    agent_id = str(data.get("agentId") or "").strip()
+    if not date_key or not agent_id:
+        return jsonify({"error": "Date and agent are required to reopen a closed day."}), 400
+    users = load_user_store()
+    agent = find_user_by_id(users, agent_id)
+    if not agent or not is_susu_agent(agent):
+        return jsonify({"error": "Select a valid SUSU agent."}), 404
+    if not can_view_operational_record(auth_user, {"branch_name": agent.get("branch"), "agent_id": agent_id}):
+        return scoped_access_denial(auth_user)
+    closes = load_json_list_store(DAILY_CLOSES_STORE_PATH)
+    kept = [
+        entry for entry in closes
+        if not (str(entry.get("agentId")) == agent_id and str(entry.get("date")) == date_key)
+    ]
+    removed_count = len(closes) - len(kept)
+    if removed_count:
+        save_json_list_store(DAILY_CLOSES_STORE_PATH, kept)
+    record_audit_log(
+        auth_user,
+        "REOPEN_DAILY_COLLECTIONS",
+        {"date": date_key, "agentId": agent_id, "staffName": agent.get("fullname"), "removedCount": removed_count},
+    )
+    notify_active_managers(
+        kind="daily_close",
+        title="Collection day reopened",
+        message=f"{auth_user['fullname']} reopened {date_key} for {agent.get('fullname')}.",
+        link_to="/transactions",
+    )
+    return jsonify({"ok": True, "removedCount": removed_count})
 
 
 @app.route("/api/customers", methods=["GET"])
@@ -3992,10 +4119,14 @@ def auth_login():
         password = str(data.get("passwordHash", ""))
         if not password:
             return jsonify({"error": "Password is required"}), 400
+        limit_key = rate_limit_key("staff-login", email)
+        if auth_rate_limited(limit_key):
+            return jsonify({"error": "Too many login attempts. Please wait 15 minutes and try again."}), 429
 
         passwords = load_password_store()
         stored_password = passwords.get(email)
         if not stored_password or not verify_password(stored_password, password):
+            record_auth_failure(limit_key)
             record_audit_log(
                 None,
                 "LOGIN_FAILED",
@@ -4006,6 +4137,7 @@ def auth_login():
         users = load_user_store()
         user = find_user_by_email(users, email)
         if not user or user["isArchived"] or not user["isActive"]:
+            record_auth_failure(limit_key)
             record_audit_log(
                 None,
                 "LOGIN_FAILED",
@@ -4013,6 +4145,7 @@ def auth_login():
             )
             return jsonify({"error": "Invalid email or password"}), 401
         if not user["isVerified"]:
+            record_auth_failure(limit_key)
             record_audit_log(
                 None,
                 "LOGIN_FAILED",
@@ -4027,6 +4160,7 @@ def auth_login():
         user["lastSeen"] = now_ms()
         save_user_store(users)
         session_token = issue_session(user["id"])
+        clear_auth_failures(limit_key)
         record_audit_log(user, "LOGIN", staff_audit_target(user))
         return jsonify({"ok": True, "user": user, "sessionToken": session_token})
     except ValueError as exc:
@@ -4046,14 +4180,19 @@ def auth_agent_login():
         password = str(data.get("passwordHash", ""))
         if not password:
             return jsonify({"error": "Password is required"}), 400
+        limit_key = rate_limit_key("agent-login", username)
+        if auth_rate_limited(limit_key):
+            return jsonify({"error": "Too many login attempts. Please wait 15 minutes and try again."}), 429
         users = load_user_store()
         user = find_user_by_username(users, username)
         passwords = load_password_store()
         stored_password = passwords.get(agent_password_key(username))
         if not user or not stored_password or not verify_password(stored_password, password):
+            record_auth_failure(limit_key)
             record_audit_log(None, "AGENT_LOGIN_FAILED", {"username": username, "reason": "invalid_credentials"})
             return jsonify({"error": "Invalid username or password"}), 401
         if user["isArchived"] or not user["isActive"]:
+            record_auth_failure(limit_key)
             record_audit_log(None, "AGENT_LOGIN_FAILED", {"username": username, "reason": "inactive_or_missing_account"})
             return jsonify({"error": "Invalid username or password"}), 401
         if bool(user.get("forcePasswordChange", False)) or not bool(user.get("setupComplete", True)):
@@ -4066,6 +4205,7 @@ def auth_agent_login():
         user["lastSeen"] = now_ms()
         save_user_store(users)
         session_token = issue_session(user["id"])
+        clear_auth_failures(limit_key)
         record_audit_log(user, "AGENT_LOGIN", staff_audit_target(user, {"username": username}))
         return jsonify({"ok": True, "user": user, "sessionToken": session_token})
     except ValueError as exc:
@@ -4084,16 +4224,23 @@ def auth_agent_verify_phone():
         username = normalize_agent_username(data.get("username"))
         temp_password = str(data.get("temporaryPassword") or "")
         phone = normalize_phone(data.get("phone"))
+        limit_key = rate_limit_key("agent-setup-phone", username)
+        if auth_rate_limited(limit_key):
+            return jsonify({"error": "Too many setup attempts. Please wait 15 minutes and try again."}), 429
         users = load_user_store()
         user = find_user_by_username(users, username)
         passwords = load_password_store()
         stored_password = passwords.get(agent_password_key(username))
         if not user or not stored_password or not verify_password(stored_password, temp_password):
+            record_auth_failure(limit_key)
             return jsonify({"error": "Invalid username or temporary password."}), 401
         if user["isArchived"] or not user["isActive"]:
+            record_auth_failure(limit_key)
             return jsonify({"error": "Invalid username or password"}), 401
         if "".join(ch for ch in str(user.get("phone") or "") if ch.isdigit()) != "".join(ch for ch in phone if ch.isdigit()):
+            record_auth_failure(limit_key)
             return jsonify({"error": "Phone number does not match the supervisor record."}), 400
+        clear_auth_failures(limit_key)
         return jsonify({"ok": True, "message": "Verification token ready."})
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -4114,7 +4261,11 @@ def auth_agent_complete_setup():
         new_password = str(data.get("newPasswordHash") or "")
         phone = normalize_phone(data.get("phone"))
         token_code = "".join(ch for ch in str(data.get("token") or "") if ch.isdigit())
+        limit_key = rate_limit_key("agent-setup-complete", username)
+        if auth_rate_limited(limit_key):
+            return jsonify({"error": "Too many setup attempts. Please wait 15 minutes and try again."}), 429
         if token_code != "1234":
+            record_auth_failure(limit_key)
             return jsonify({"error": "Invalid verification token."}), 400
         if len(new_password) < 8:
             return jsonify({"error": "New password must be at least 8 characters."}), 400
@@ -4123,11 +4274,13 @@ def auth_agent_complete_setup():
         passwords = load_password_store()
         stored_password = passwords.get(agent_password_key(username))
         if not user or not stored_password or not verify_password(stored_password, temp_password):
+            record_auth_failure(limit_key)
             return jsonify({"error": "Invalid username or temporary password."}), 401
         existing_username = find_user_by_username_safe(users, new_username)
         if existing_username and existing_username.get("id") != user.get("id"):
             return jsonify({"error": "That permanent username is already used by another agent."}), 400
         if "".join(ch for ch in str(user.get("phone") or "") if ch.isdigit()) != "".join(ch for ch in phone if ch.isdigit()):
+            record_auth_failure(limit_key)
             return jsonify({"error": "Phone number does not match the supervisor record."}), 400
         if new_username != username:
             passwords.pop(agent_password_key(username), None)
@@ -4139,6 +4292,7 @@ def auth_agent_complete_setup():
         save_user_store(users)
         save_password_store(passwords)
         session_token = issue_session(user["id"])
+        clear_auth_failures(limit_key)
         record_audit_log(
             user,
             "AGENT_SETUP_COMPLETED",
@@ -4177,11 +4331,15 @@ def auth_request_password_reset():
     try:
         email = validate_email(str(data.get("email", "")))
         reset_page_url = str(data.get("resetPageUrl", "")).strip()
+        limit_key = rate_limit_key("password-reset", email)
+        if auth_rate_limited(limit_key):
+            return jsonify({"error": "Too many reset requests. Please wait 15 minutes and try again."}), 429
 
         users = load_user_store()
         user = find_user_by_email(users, email)
         if not user:
-            return jsonify({"error": "Email not found"}), 404
+            record_auth_failure(limit_key)
+            return jsonify({"ok": True})
 
         token = secrets.token_urlsafe(32)
         reset_url = build_reset_url(reset_page_url, token)
@@ -4192,6 +4350,7 @@ def auth_request_password_reset():
         }
         save_reset_tokens(tokens)
         send_password_reset_link_email(email, reset_url)
+        clear_auth_failures(limit_key)
         record_audit_log(None, "REQUEST_PASSWORD_RESET", staff_audit_target(user))
         return jsonify({"ok": True})
     except ValueError as exc:

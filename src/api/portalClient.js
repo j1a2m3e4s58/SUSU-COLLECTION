@@ -25,6 +25,12 @@ async function apiRequest(path, { method = "GET", body } = {}) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (response.status === 401 && /session|unauthorized/i.test(data.error || "")) {
+      localStorage.removeItem("susu_auth_user");
+      if (typeof window !== "undefined" && !window.location.pathname.includes("/login")) {
+        window.location.href = "/login";
+      }
+    }
     throw new Error(data.error || "Request failed");
   }
   return data;
@@ -275,6 +281,13 @@ export async function seedTestCustomers() {
   });
 }
 
+export async function removeTestCustomers() {
+  return apiRequest("/maintenance/remove-test-customers", {
+    method: "POST",
+    body: {},
+  });
+}
+
 export async function getDailyCloseStatus(date, agentId) {
   const params = new URLSearchParams();
   if (date) params.set("date", date);
@@ -289,6 +302,13 @@ export async function closeDailyCollections(date) {
     body: { date },
   });
   return data.close;
+}
+
+export async function reopenDailyCollections(date, agentId) {
+  return apiRequest("/daily-close/reopen", {
+    method: "POST",
+    body: { date, agentId },
+  });
 }
 
 export async function getNotifications() {
