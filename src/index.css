@@ -88,10 +88,6 @@
     @apply bg-background text-foreground font-body antialiased;
   }
 
-  [data-feedback-overlay-consumed="true"]:not(body):not(#root) {
-    display: none !important;
-  }
-
   html:not(.dark) body {
     background:
       radial-gradient(circle at 18% 8%, hsl(191 86% 94%) 0, transparent 34rem),
