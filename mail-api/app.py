@@ -96,6 +96,17 @@ DEFAULT_PORTAL_SETTINGS = {
     "resolutionRateLabel": "Resolution Rate",
 }
 
+TEST_CUSTOMER_SEED_ROWS = [
+    ("TEST AMA MENSAH", "131000100001", "0240000001", "BAWJIASE"),
+    ("TEST KWAME ADJEI", "131000100002", "0240000002", "BAWJIASE"),
+    ("TEST EFUA BOATENG", "131000100003", "0240000003", "OFAAKOR"),
+    ("TEST KOJO APPIAH", "131000100004", "0240000004", "OFAAKOR"),
+    ("TEST ABENA OWUSU", "131000100005", "0240000005", "ADEISO"),
+    ("TEST YAW ASANTE", "131000100006", "0240000006", "ADEISO"),
+    ("TEST AKOSUA DARKO", "131000100007", "0240000007", "HEAD OFFICE"),
+    ("TEST KOFI SARPONG", "131000100008", "0240000008", "KASOA MAIN"),
+]
+
 
 def env_secret(name: str) -> str:
     return str(os.getenv(name, "") or "").strip()
@@ -2785,6 +2796,62 @@ def clear_test_data():
     save_audit_logs_store([])
     record_audit_log(auth_user, "CLEAR_TEST_DATA", {"cleared": ["customers", "collections", "notifications", "dailyCloses", "auditLogs"]})
     return jsonify({"ok": True})
+
+
+@app.route("/api/maintenance/seed-test-customers", methods=["POST", "OPTIONS"])
+def seed_test_customers():
+    preflight = handle_options()
+    if preflight:
+        return preflight
+    _, auth_user, error = require_owner_admin()
+    if error:
+        return error
+    settings = load_portal_settings_store()
+    if str(settings.get("appMode", "test")).lower() != "test":
+        return jsonify({"error": "Switch the portal to Test Mode before loading test customers."}), 400
+
+    valid_branches = {str(item or "").strip().upper() for item in settings.get("branches", []) if str(item or "").strip()}
+    fallback_branch = next(iter(valid_branches), "HEAD OFFICE")
+    customers = load_json_list_store(CUSTOMERS_STORE_PATH)
+    existing_numbers = {str(item.get("account_number", "")).strip() for item in customers}
+    created = []
+    skipped = []
+    timestamp = now_ms()
+
+    for index, (name, account_number, phone, branch) in enumerate(TEST_CUSTOMER_SEED_ROWS, start=1):
+        branch_name = branch if branch in valid_branches else fallback_branch
+        if account_number in existing_numbers:
+            skipped.append({"account_number": account_number, "reason": "already exists"})
+            continue
+        customer = {
+            "id": f"test-cust-{timestamp}-{index:02d}",
+            "account_name": name,
+            "account_number": account_number,
+            "phone": phone,
+            "branch_id": branch_name,
+            "branch_name": branch_name,
+            "customer_status": "active",
+            "address": "TEST DATA",
+            "total_deposits": 0,
+            "last_deposit_date": None,
+            "createdAt": timestamp + index,
+            "createdBy": auth_user["fullname"],
+            "createdById": auth_user["id"],
+            "createdByEmail": auth_user["email"],
+            "isTestData": True,
+        }
+        customers.append(customer)
+        created.append(customer)
+        existing_numbers.add(account_number)
+
+    if created:
+        save_json_list_store(CUSTOMERS_STORE_PATH, customers)
+    record_audit_log(
+        auth_user,
+        "SEED_TEST_CUSTOMERS",
+        {"createdCount": len(created), "skippedCount": len(skipped), "testMode": settings.get("appMode", "test")},
+    )
+    return jsonify({"ok": True, "createdCount": len(created), "skipped": skipped, "customers": created})
 
 
 @app.route("/api/daily-close", methods=["GET"])

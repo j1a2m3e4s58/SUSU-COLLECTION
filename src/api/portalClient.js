@@ -268,6 +268,13 @@ export async function clearTestData() {
   });
 }
 
+export async function seedTestCustomers() {
+  return apiRequest("/maintenance/seed-test-customers", {
+    method: "POST",
+    body: {},
+  });
+}
+
 export async function getDailyCloseStatus(date, agentId) {
   const params = new URLSearchParams();
   if (date) params.set("date", date);

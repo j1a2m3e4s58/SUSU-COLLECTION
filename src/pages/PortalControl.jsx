@@ -18,6 +18,7 @@ import {
   getPortalSettings,
   getStoredPortalControlPassword,
   importBackup,
+  seedTestCustomers,
   updatePortalSettings,
 } from "@/api/portalClient";
 import { useAuth } from "@/lib/AuthContext";
@@ -168,6 +169,7 @@ export default function PortalControl() {
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [seedingCustomers, setSeedingCustomers] = useState(false);
   const [clearBackupReady, setClearBackupReady] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -312,6 +314,24 @@ export default function PortalControl() {
     }
   };
 
+  const loadTestCustomers = async () => {
+    if (draft.appMode !== "test") {
+      setError("Switch to Test Mode and save before loading test customers.");
+      return;
+    }
+    setSeedingCustomers(true);
+    setError("");
+    setSuccess("");
+    try {
+      const result = await seedTestCustomers();
+      setSuccess(`Loaded ${result.createdCount || 0} test customer(s). Existing sample accounts were skipped automatically.`);
+    } catch (err) {
+      setError(err.message || "Could not load test customers.");
+    } finally {
+      setSeedingCustomers(false);
+    }
+  };
+
   if (loading) {
     return <div className="h-64 animate-pulse rounded-xl border border-border bg-card" />;
   }
@@ -393,6 +413,10 @@ export default function PortalControl() {
               {importing ? "Importing..." : "Import Backup"}
               <input type="file" accept="application/json,.json" className="hidden" onChange={uploadBackup} disabled={importing} />
             </label>
+            <Button type="button" variant="outline" className="gap-2 bg-background/70" onClick={loadTestCustomers} disabled={seedingCustomers || draft.appMode !== "test"}>
+              <ListPlus className="h-4 w-4" />
+              {seedingCustomers ? "Loading..." : "Load Test Customers"}
+            </Button>
             <Button type="button" variant="destructive" className="gap-2" onClick={clearTestingData} disabled={clearing || !clearBackupReady || draft.appMode !== "test"}>
               <Trash2 className="h-4 w-4" />
               {clearing ? "Clearing..." : "Clear Test Data"}
