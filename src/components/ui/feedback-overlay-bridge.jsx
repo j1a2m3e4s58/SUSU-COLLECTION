@@ -29,6 +29,12 @@ function elementIsVisible(element) {
   return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
 }
 
+function shouldHideInlineMessage(element) {
+  const rect = element.getBoundingClientRect();
+  const hasInteractiveContent = Boolean(element.querySelector?.("button, input, select, textarea, form, table, [role='dialog']"));
+  return rect.height > 0 && rect.height <= 140 && rect.width <= 900 && !hasInteractiveContent;
+}
+
 function detectVariant(element) {
   const classes = String(element.className || "");
   const text = cleanMessage(element.textContent).toLowerCase();
@@ -71,7 +77,9 @@ export default function FeedbackOverlayBridge() {
         description: message,
         duration: variant === "destructive" ? 6200 : 4800,
       });
-      element.dataset.feedbackOverlayConsumed = "true";
+      if (shouldHideInlineMessage(element)) {
+        element.dataset.feedbackOverlayConsumed = "true";
+      }
     };
 
     const scan = (root = document.body) => {
