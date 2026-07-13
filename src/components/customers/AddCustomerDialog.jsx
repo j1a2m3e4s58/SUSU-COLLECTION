@@ -37,6 +37,7 @@ export default function AddCustomerDialog({ open, onClose, onSaved, branches }) 
   };
 
   const inputClass = "w-full bg-muted/50 border border-border rounded-lg px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40";
+  const branchOptions = branches?.length ? branches : ['HEAD OFFICE', 'BAWJIASE', 'ADEISO', 'OFAAKOR', 'KASOA NEW MARKET', 'KASOA MAIN'];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -62,7 +63,17 @@ export default function AddCustomerDialog({ open, onClose, onSaved, branches }) 
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Branch *</label>
-            <ControlledSelect value={form.branch_id} onChange={(value) => handleChange('branch_id', value)} options={branches} placeholder="Select a branch" className={inputClass} />
+            <select
+              value={form.branch_id}
+              onChange={(event) => handleChange('branch_id', event.target.value)}
+              className={`${inputClass} h-12 appearance-auto`}
+              required
+            >
+              <option value="">Select a branch</option>
+              {branchOptions.map((branch) => (
+                <option key={branch} value={branch}>{branch}</option>
+              ))}
+            </select>
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Customer Status</label>

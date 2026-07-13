@@ -13,6 +13,7 @@ const statusColors = {
   inactive: 'bg-muted text-muted-foreground',
   suspended: 'bg-red-500/10 text-red-500',
 };
+const defaultBranches = ['HEAD OFFICE', 'BAWJIASE', 'ADEISO', 'OFAAKOR', 'KASOA NEW MARKET', 'KASOA MAIN'];
 
 export default function Customers() {
   const { selectedDate, selectedMonth, selectedScope, selectedLabel } = useWorkDate();
@@ -37,7 +38,7 @@ export default function Customers() {
       ]);
       setCustomers(customerData || []);
       setCollections(collectionData || []);
-      setBranches(settings?.branches || []);
+      setBranches(settings?.branches?.length ? settings.branches : defaultBranches);
     } catch {}
     setLoading(false);
   };

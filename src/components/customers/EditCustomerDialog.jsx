@@ -50,6 +50,7 @@ export default function EditCustomerDialog({ customer, open, onClose, onSaved, b
   };
 
   const inputClass = "w-full bg-muted/50 border border-border rounded-lg px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40";
+  const branchOptions = branches?.length ? branches : ['HEAD OFFICE', 'BAWJIASE', 'ADEISO', 'OFAAKOR', 'KASOA NEW MARKET', 'KASOA MAIN'];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -73,7 +74,17 @@ export default function EditCustomerDialog({ customer, open, onClose, onSaved, b
             <input className={inputClass} value={form.phone} onChange={(event) => handleChange('phone', event.target.value)} />
           </Field>
           <Field label="Branch *">
-            <ControlledSelect value={form.branch_name} onChange={(value) => handleChange('branch_name', value)} options={branches} placeholder="Select a branch" className={inputClass} />
+            <select
+              value={form.branch_name}
+              onChange={(event) => handleChange('branch_name', event.target.value)}
+              className={`${inputClass} h-12 appearance-auto`}
+              required
+            >
+              <option value="">Select a branch</option>
+              {branchOptions.map((branch) => (
+                <option key={branch} value={branch}>{branch}</option>
+              ))}
+            </select>
           </Field>
           <Field label="Status">
             <ControlledSelect value={form.customer_status} onChange={(value) => handleChange('customer_status', value)} options={[{ value: 'active', label: 'Active' }, { value: 'inactive', label: 'Inactive' }, { value: 'suspended', label: 'Suspended' }]} className={inputClass} />
