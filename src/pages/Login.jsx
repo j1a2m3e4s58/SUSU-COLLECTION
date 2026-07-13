@@ -121,7 +121,7 @@ export default function Login() {
 
   return (
     <>
-    <AuthLayout className="flex min-h-0 max-w-[420px] flex-col justify-center px-5 pb-4 pt-16 sm:px-5 sm:pb-5 sm:pt-16">
+    <AuthLayout className="flex min-h-0 max-w-[420px] flex-col justify-center px-5 pb-5 pt-16 sm:px-5 sm:pb-6 sm:pt-16">
       <div className="mb-4 space-y-1 text-center">
         <div className="page-kicker text-center">Secure staff access</div>
         <h1 className="font-display text-2xl font-bold text-foreground">
@@ -133,7 +133,7 @@ export default function Login() {
       </div>
 
       {error && (
-        <div className="mb-2 max-h-12 overflow-y-auto rounded-lg bg-destructive/10 px-3 py-2 text-xs leading-4 text-destructive">
+        <div className="mb-2 rounded-lg bg-destructive/10 px-3 py-1.5 text-xs leading-4 text-destructive">
           {error}
         </div>
       )}
