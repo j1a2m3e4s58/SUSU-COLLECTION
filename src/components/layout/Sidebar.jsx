@@ -20,11 +20,11 @@ import { setStoredPortalControlPassword } from '@/api/portalClient';
 export const navItems = [
   { label: 'Dashboard', path: '/', icon: LayoutDashboard },
   { label: 'Field Collection', path: '/field-collection', icon: HandCoins, agentOnly: true },
-  { label: 'Customers', path: '/customers', icon: Users },
+  { label: 'Customers', path: '/customers', icon: Users, customerManagerOnly: true },
   { label: 'Directory', path: '/directory', icon: Contact },
   { label: 'Transactions', path: '/transactions', icon: Receipt },
   { label: 'Reports', path: '/reports', icon: BarChart3 },
-  { label: 'Agents', path: '/agents', icon: UserCog, managerOnly: true },
+  { label: 'Agents', path: '/agents', icon: UserCog, agentManagerOnly: true },
   { label: 'Branches', path: '/branches', icon: Building2, managerOnly: true },
   { label: 'Past Staff', path: '/past-staff', icon: UserX, ownerOnly: true },
   { label: 'Portal Control', path: '/portal-control', icon: SlidersHorizontal, portalControl: true, ownerOnly: true },
@@ -45,6 +45,8 @@ export default function Sidebar({ isOpen, onClose, user, settings }) {
     canManagePortal ||
     (user?.role === 'Supervisor' && Array.isArray(user?.managedBranches) && user.managedBranches.length > 0);
   const isSusuAgent = String(user?.department || '').trim().toUpperCase() === 'SUSU AGENT';
+  const canManageCustomers = user?.role === 'OwnerAdmin' || user?.role === 'Supervisor';
+  const canManageAgents = canManageCustomers;
 
   const labelFor = (item) => {
     if (item.path === '/') return settings?.dashboardLabel || item.label;
@@ -90,7 +92,9 @@ export default function Sidebar({ isOpen, onClose, user, settings }) {
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           {navItems.filter((item) => {
             if (item.managerOnly && !canManagePortal) return false;
+            if (item.agentManagerOnly && !canManageAgents) return false;
             if (item.ownerOnly && !canOwnerControl) return false;
+            if (item.customerManagerOnly && !canManageCustomers) return false;
             if (item.supervisorOnly && !canSupervise) return false;
             if (item.agentOnly && !isSusuAgent) return false;
             return true;

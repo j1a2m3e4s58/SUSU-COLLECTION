@@ -48,6 +48,12 @@ const RequireSusuAgent = ({ children }) => {
   return allowed ? children : <Navigate to="/" replace />;
 };
 
+const RequireCustomerManager = ({ children }) => {
+  const { user } = useAuth();
+  const allowed = user?.role === 'OwnerAdmin' || user?.role === 'Supervisor';
+  return allowed ? children : <Navigate to="/" replace />;
+};
+
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
 
@@ -78,12 +84,12 @@ const AuthenticatedApp = () => {
         <Route element={<AppLayout />}>
           <Route path="/" element={<Dashboard />} />
           <Route path="/field-collection" element={<RequireSusuAgent><FieldCollection /></RequireSusuAgent>} />
-          <Route path="/customers" element={<Customers />} />
-          <Route path="/inactive-customers" element={<InactiveCustomers />} />
+          <Route path="/customers" element={<RequireCustomerManager><Customers /></RequireCustomerManager>} />
+          <Route path="/inactive-customers" element={<RequireCustomerManager><InactiveCustomers /></RequireCustomerManager>} />
           <Route path="/directory" element={<Directory />} />
           <Route path="/transactions" element={<Transactions />} />
           <Route path="/reports" element={<Reports />} />
-          <Route path="/agents" element={<RequireAdmin><AgentManagement /></RequireAdmin>} />
+          <Route path="/agents" element={<RequireCustomerManager><AgentManagement /></RequireCustomerManager>} />
           <Route path="/branches" element={<RequireAdmin><BranchManagement /></RequireAdmin>} />
           <Route path="/supervisor-management" element={<RequireAdmin><SupervisorManagement /></RequireAdmin>} />
           <Route path="/audit-log" element={<RequireAdmin><AuditLog /></RequireAdmin>} />

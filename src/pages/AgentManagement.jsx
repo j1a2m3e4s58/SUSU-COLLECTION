@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { createAuditLog, deleteStaff, exportBackup, getActiveStaff, getCollections, getPortalSettings, updateStaff } from '@/api/portalClient';
+import * as XLSX from 'xlsx';
+import { createAgentAccount, createAuditLog, deleteStaff, exportBackup, getActiveStaff, getCollections, getPortalSettings, importCustomers, resetAgentPassword, updateStaff } from '@/api/portalClient';
 import ControlledSelect from '@/components/ui/controlled-select';
 import { useAuth } from '@/lib/AuthContext';
 import { exportHtmlPdf } from '@/lib/pdfExport';
-import { UserCog, Search, Building2, X, AlertCircle, Loader2, Trash2, FileText, Download } from 'lucide-react';
+import { UserCog, Search, Building2, X, AlertCircle, Loader2, Trash2, FileText, Download, Plus, Upload, KeyRound } from 'lucide-react';
 
 export default function AgentManagement() {
   const { user } = useAuth();
@@ -23,19 +24,48 @@ export default function AgentManagement() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteBackupReady, setDeleteBackupReady] = useState(false);
   const [exportingBackup, setExportingBackup] = useState(false);
+  const [showCreateAgent, setShowCreateAgent] = useState(false);
+  const [showImportCustomers, setShowImportCustomers] = useState(false);
+  const [resetTarget, setResetTarget] = useState(null);
+  const [agentForm, setAgentForm] = useState({ fullname: '', username: '', temporaryPassword: '', phone: '', branch: '' });
+  const [resetPassword, setResetPassword] = useState('');
+  const [importBranch, setImportBranch] = useState('');
+  const [importRows, setImportRows] = useState([]);
+  const [importFileName, setImportFileName] = useState('');
+  const [importSummary, setImportSummary] = useState(null);
 
-  useEffect(() => {
-    Promise.all([
+  const isOwner = user?.role === 'OwnerAdmin';
+  const supervisorBranches = Array.isArray(user?.managedBranches) && user.managedBranches.length
+    ? user.managedBranches
+    : [user?.branch].filter(Boolean);
+  const scopedBranches = isOwner ? branches : branches.filter((branch) => supervisorBranches.includes(branch));
+
+  const refreshData = async () => {
+    setLoading(true);
+    try {
+      const [s, b, c] = await Promise.all([
       getActiveStaff(),
       getPortalSettings(),
       getCollections(),
-    ]).then(([s, b, c]) => {
-      setStaff((s || []).filter(x => String(x.department || '').trim().toUpperCase() === 'SUSU AGENT'));
-      setBranches(b?.branches || []);
+      ]);
+      const nextBranches = b?.branches || [];
+      setBranches(nextBranches);
+      const allowed = isOwner
+        ? nextBranches
+        : nextBranches.filter((branch) => supervisorBranches.includes(branch));
+      setImportBranch((current) => current || allowed[0] || '');
+      setAgentForm((current) => ({ ...current, branch: current.branch || allowed[0] || '' }));
+      setStaff((s || []).filter(x =>
+        String(x.department || '').trim().toUpperCase() === 'SUSU AGENT' &&
+        (isOwner || supervisorBranches.includes(x.branch || x.branch_name))
+      ));
       setCollections(c || []);
+    } finally {
       setLoading(false);
-    }).catch(() => setLoading(false));
-  }, []);
+    }
+  };
+
+  useEffect(() => { refreshData().catch(() => setLoading(false)); }, [user?.id]);
 
   const filtered = staff.filter(s => {
     const q = search.toLowerCase().trim();
@@ -178,6 +208,98 @@ export default function AgentManagement() {
     }
   };
 
+  const handleCreateAgent = async () => {
+    if (!agentForm.username || !agentForm.temporaryPassword || !agentForm.phone || !agentForm.branch) {
+      setError('Enter username, temporary password, phone, and branch.');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      await createAgentAccount(agentForm);
+      setSuccess(`Agent ${agentForm.username} added. They can now use Agent username login.`);
+      setShowCreateAgent(false);
+      setAgentForm({ fullname: '', username: '', temporaryPassword: '', phone: '', branch: scopedBranches[0] || '' });
+      await refreshData();
+      setTimeout(() => setSuccess(''), 5000);
+    } catch (err) {
+      setError(err.message || 'Could not add agent.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleResetAgentPassword = async () => {
+    if (!resetTarget || !resetPassword.trim()) return;
+    setSaving(true);
+    setError('');
+    try {
+      await resetAgentPassword(resetTarget.id, resetPassword.trim());
+      setSuccess(`Temporary password reset for ${resetTarget.fullname || resetTarget.full_name}.`);
+      setResetTarget(null);
+      setResetPassword('');
+      await refreshData();
+      setTimeout(() => setSuccess(''), 5000);
+    } catch (err) {
+      setError(err.message || 'Could not reset password.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const normalizeImportRow = (row) => {
+    const find = (...keys) => {
+      const entries = Object.entries(row || {});
+      const match = entries.find(([key]) => keys.includes(String(key).trim().toLowerCase()));
+      return match ? String(match[1] ?? '').trim().replace(/\.0$/, '') : '';
+    };
+    return {
+      account_name: find('account name', 'account_name', 'name', 'customer name'),
+      account_number: find('account number', 'account_number', 'account no', 'account no.', 'account'),
+      branch: find('branch', 'branch name') || importBranch,
+    };
+  };
+
+  const handleImportFile = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setImportFileName(file.name);
+    setImportSummary(null);
+    setError('');
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' }).map(normalizeImportRow)
+        .filter((row) => row.account_name && row.account_number);
+      setImportRows(rows);
+      if (!rows.length) setError('No valid rows found. Use columns: Account Name, Account Number, Branch.');
+    } catch (err) {
+      setError(err.message || 'Could not read the upload file.');
+    } finally {
+      event.target.value = '';
+    }
+  };
+
+  const handleImportCustomers = async () => {
+    if (!importBranch) { setError('Select the branch for this import.'); return; }
+    if (!importRows.length) { setError('Choose a CSV or Excel file first.'); return; }
+    setSaving(true);
+    setError('');
+    try {
+      const result = await importCustomers({ branch: importBranch, customers: importRows });
+      setImportSummary(result);
+      setSuccess(`${result.createdCount || 0} customer(s) imported.`);
+      setImportRows([]);
+      setImportFileName('');
+      await refreshData();
+    } catch (err) {
+      setError(err.message || 'Could not import customers.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const inputClass = "w-full bg-muted/50 border border-border rounded-lg px-3 py-2.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40";
 
   return (
@@ -198,6 +320,16 @@ export default function AgentManagement() {
               className={`w-full ${inputClass} pl-10`} />
           </div>
           <div className="flex flex-wrap gap-2">
+            <button onClick={() => { setShowCreateAgent(true); setError(''); }}
+              className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700">
+              <Plus className="h-4 w-4" />
+              Add Agent
+            </button>
+            <button onClick={() => { setShowImportCustomers(true); setError(''); }}
+              className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700">
+              <Upload className="h-4 w-4" />
+              Import Customers
+            </button>
             {selectedIds.size > 0 && (
               <button onClick={() => { setDeleteBackupReady(false); setConfirmDelete(true); }} disabled={deletingSelected}
                 className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50">
@@ -245,10 +377,16 @@ export default function AgentManagement() {
                     <td className="py-3 px-3 text-right"><span className="text-emerald-500 font-semibold">GHS {stats.today.toLocaleString()}</span><br /><span className="text-xs text-muted-foreground">{stats.todayCount} txns</span></td>
                     <td className="py-3 px-3 text-right hidden md:table-cell"><span className="text-foreground font-semibold">GHS {stats.total.toLocaleString()}</span><br /><span className="text-xs text-muted-foreground">{stats.count} total</span></td>
                     <td className="py-3 px-3 text-center">
-                      <button onClick={() => { setTransferAgent(a); setNewBranch(''); setReason(''); setError(''); }}
-                        className="inline-flex items-center gap-1 bg-blue-500/10 text-blue-500 text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-blue-500/20 transition-colors">
-                        <Building2 className="w-3 h-3" /> Reassign
-                      </button>
+                      <div className="flex flex-wrap justify-center gap-2">
+                        <button onClick={() => { setResetTarget(a); setResetPassword(''); setError(''); }}
+                          className="inline-flex items-center gap-1 bg-amber-500/10 text-amber-500 text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-amber-500/20 transition-colors">
+                          <KeyRound className="w-3 h-3" /> Reset
+                        </button>
+                        <button onClick={() => { setTransferAgent(a); setNewBranch(''); setReason(''); setError(''); }}
+                          className="inline-flex items-center gap-1 bg-blue-500/10 text-blue-500 text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-blue-500/20 transition-colors">
+                          <Building2 className="w-3 h-3" /> Reassign
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -277,10 +415,16 @@ export default function AgentManagement() {
                     <p className="font-mono text-xs text-muted-foreground">{a.agent_code || '-'}</p>
                     <p className="mt-1 text-xs text-muted-foreground">{displayBranch}</p>
                   </div>
-                  <button onClick={() => { setTransferAgent(a); setNewBranch(''); setReason(''); setError(''); }}
-                    className="shrink-0 rounded-lg bg-blue-500/10 px-3 py-1.5 text-xs font-medium text-blue-500">
-                    Reassign
-                  </button>
+                  <div className="flex shrink-0 flex-col gap-2">
+                    <button onClick={() => { setResetTarget(a); setResetPassword(''); setError(''); }}
+                      className="rounded-lg bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-500">
+                      Reset
+                    </button>
+                    <button onClick={() => { setTransferAgent(a); setNewBranch(''); setReason(''); setError(''); }}
+                      className="rounded-lg bg-blue-500/10 px-3 py-1.5 text-xs font-medium text-blue-500">
+                      Reassign
+                    </button>
+                  </div>
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                   <div>
@@ -332,6 +476,107 @@ export default function AgentManagement() {
                 {deletingSelected ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                 Delete
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showCreateAgent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowCreateAgent(false)} />
+          <div className="relative w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-2xl">
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <h2 className="font-heading text-lg font-bold text-foreground">Add Agent Login</h2>
+                <p className="text-sm text-muted-foreground">Create a simple username login for a SUSU agent.</p>
+              </div>
+              <button onClick={() => setShowCreateAgent(false)} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="space-y-3">
+              <input className={inputClass} value={agentForm.fullname} onChange={(e) => setAgentForm({ ...agentForm, fullname: e.target.value })} placeholder="Agent full name" />
+              <input className={inputClass} value={agentForm.username} onChange={(e) => setAgentForm({ ...agentForm, username: e.target.value })} placeholder="Username e.g. gabriel01" />
+              <input className={inputClass} value={agentForm.phone} onChange={(e) => setAgentForm({ ...agentForm, phone: e.target.value })} placeholder="Phone number used for verification" />
+              <input className={inputClass} value={agentForm.temporaryPassword} onChange={(e) => setAgentForm({ ...agentForm, temporaryPassword: e.target.value })} placeholder="Temporary password" />
+              <ControlledSelect value={agentForm.branch} onChange={(branch) => setAgentForm({ ...agentForm, branch })} options={scopedBranches} placeholder="Select branch" className={inputClass} />
+              <div className="rounded-lg border border-blue-500/20 bg-blue-500/10 p-3 text-xs text-muted-foreground">
+                First login will ask the agent for this phone number, token 1234, then their permanent password.
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button onClick={() => setShowCreateAgent(false)} className="flex-1 rounded-lg bg-muted py-2.5 text-sm font-medium text-foreground hover:bg-muted/70">Cancel</button>
+                <button onClick={handleCreateAgent} disabled={saving} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-emerald-600 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                  Add
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showImportCustomers && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowImportCustomers(false)} />
+          <div className="relative w-full max-w-lg rounded-2xl border border-border bg-card p-6 shadow-2xl">
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <h2 className="font-heading text-lg font-bold text-foreground">Import Customers</h2>
+                <p className="text-sm text-muted-foreground">Upload CSV or Excel with Account Name, Account Number, Branch.</p>
+              </div>
+              <button onClick={() => setShowImportCustomers(false)} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="space-y-4">
+              <ControlledSelect value={importBranch} onChange={setImportBranch} options={scopedBranches} placeholder="Import branch" className={inputClass} />
+              <label className="flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-border bg-muted/30 p-5 text-center hover:bg-muted/50">
+                <Upload className="mb-2 h-6 w-6 text-blue-500" />
+                <span className="text-sm font-medium text-foreground">{importFileName || 'Choose CSV / Excel file'}</span>
+                <span className="mt-1 text-xs text-muted-foreground">{importRows.length ? `${importRows.length} valid row(s) ready` : 'Accepted: .csv, .xlsx, .xls'}</span>
+                <input type="file" accept=".csv,.xlsx,.xls" onChange={handleImportFile} className="hidden" />
+              </label>
+              {importRows.length > 0 && (
+                <div className="max-h-32 overflow-y-auto rounded-lg border border-border bg-background/50 p-2 text-xs">
+                  {importRows.slice(0, 5).map((row, index) => (
+                    <p key={index} className="truncate text-muted-foreground">{row.account_number} - {row.account_name} - {row.branch || importBranch}</p>
+                  ))}
+                </div>
+              )}
+              {importSummary && (
+                <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3 text-xs text-emerald-600">
+                  Imported {importSummary.createdCount || 0}. Skipped {(importSummary.skipped || []).length}.
+                </div>
+              )}
+              <div className="flex gap-3 pt-2">
+                <button onClick={() => setShowImportCustomers(false)} className="flex-1 rounded-lg bg-muted py-2.5 text-sm font-medium text-foreground hover:bg-muted/70">Close</button>
+                <button onClick={handleImportCustomers} disabled={saving || !importRows.length} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-cyan-600 py-2.5 text-sm font-medium text-white hover:bg-cyan-700 disabled:opacity-50">
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  Import
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {resetTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setResetTarget(null)} />
+          <div className="relative w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-2xl">
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <h2 className="font-heading text-lg font-bold text-foreground">Reset Agent Password</h2>
+                <p className="text-sm text-muted-foreground">{resetTarget.fullname || resetTarget.full_name}</p>
+              </div>
+              <button onClick={() => setResetTarget(null)} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="space-y-3">
+              <input className={inputClass} value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} placeholder="New temporary password" />
+              <p className="text-xs text-muted-foreground">The agent will verify phone + token 1234 and set a permanent password on next login.</p>
+              <div className="flex gap-3 pt-2">
+                <button onClick={() => setResetTarget(null)} className="flex-1 rounded-lg bg-muted py-2.5 text-sm font-medium text-foreground hover:bg-muted/70">Cancel</button>
+                <button onClick={handleResetAgentPassword} disabled={saving || !resetPassword} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-amber-600 py-2.5 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50">
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+                  Reset
+                </button>
+              </div>
             </div>
           </div>
         </div>

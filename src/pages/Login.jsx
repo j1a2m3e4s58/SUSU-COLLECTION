@@ -10,9 +10,15 @@ import { Eye, EyeOff, Loader2 } from "lucide-react";
 
 export default function Login() {
   const navigate = useNavigate();
-  const { login, portalSettings } = useAuth();
+  const { login, loginAgent, completeAgentFirstLogin, portalSettings } = useAuth();
+  const [mode, setMode] = useState("staff");
+  const [setupStep, setSetupStep] = useState(false);
   const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [phone, setPhone] = useState("");
+  const [token, setToken] = useState("");
+  const [newPassword, setNewPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState("");
@@ -27,6 +33,44 @@ export default function Login() {
       navigate("/", { replace: true });
     } catch (err) {
       setError(err.message || "Invalid email or password");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAgentSubmit = async (e) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      const result = await loginAgent(username, password);
+      if (result?.requiresSetup) {
+        setSetupStep(true);
+      } else {
+        navigate("/", { replace: true });
+      }
+    } catch (err) {
+      setError(err.message || "Invalid username or password");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAgentSetup = async (e) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      await completeAgentFirstLogin({
+        username,
+        temporaryPassword: password,
+        phone,
+        token,
+        newPassword,
+      });
+      navigate("/", { replace: true });
+    } catch (err) {
+      setError(err.message || "Could not complete agent setup");
     } finally {
       setLoading(false);
     }
@@ -50,6 +94,7 @@ export default function Login() {
         </div>
       )}
 
+      {mode === "staff" && (
       <form onSubmit={handleSubmit} className="space-y-3">
         <div className="space-y-1">
           <Label
@@ -134,8 +179,83 @@ export default function Login() {
           )}
         </Button>
       </form>
+      )}
+
+      {mode === "agent" && !setupStep && (
+        <form onSubmit={handleAgentSubmit} className="space-y-3">
+          <div className="space-y-1">
+            <Label htmlFor="agent-username" className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
+              Agent Username
+            </Label>
+            <Input
+              id="agent-username"
+              type="text"
+              placeholder="e.g. gabriel01"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className="h-9 glass-input text-sm"
+              autoComplete="username"
+              autoFocus
+              required
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="agent-password" className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
+              Temporary / Agent Password
+            </Label>
+            <div className="relative">
+              <Input
+                id="agent-password"
+                type={showPassword ? "text" : "password"}
+                placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="h-9 glass-input pr-10 text-sm"
+                autoComplete="current-password"
+                required
+              />
+              <button type="button" className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground" onClick={() => setShowPassword((value) => !value)}>
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+          </div>
+          <Button type="submit" className="h-10 w-full glass-button text-sm font-bold uppercase tracking-[0.16em]" disabled={loading || !username || !password}>
+            {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Signing in...</> : "Agent Login"}
+          </Button>
+        </form>
+      )}
+
+      {mode === "agent" && setupStep && (
+        <form onSubmit={handleAgentSetup} className="space-y-3">
+          <div className="rounded-lg border border-blue-500/20 bg-blue-500/10 p-3 text-xs text-muted-foreground">
+            First login: enter the phone number your supervisor recorded, use token <span className="font-semibold text-foreground">1234</span>, then set your permanent password.
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="agent-phone" className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Phone Number</Label>
+            <Input id="agent-phone" value={phone} onChange={(e) => setPhone(e.target.value)} className="h-9 glass-input text-sm" placeholder="024..." required />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="agent-token" className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Token</Label>
+            <Input id="agent-token" value={token} onChange={(e) => setToken(e.target.value)} className="h-9 glass-input text-sm" placeholder="1234" required />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="agent-new-password" className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">New Password</Label>
+            <Input id="agent-new-password" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="h-9 glass-input text-sm" minLength={8} required />
+          </div>
+          <Button type="submit" className="h-10 w-full glass-button text-sm font-bold uppercase tracking-[0.16em]" disabled={loading || !phone || !token || !newPassword}>
+            {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Setting up...</> : "Complete Setup"}
+          </Button>
+        </form>
+      )}
 
       <div className="mt-3 border-t border-border/40 pt-3 text-center">
+        <button
+          type="button"
+          onClick={() => { setMode(mode === "staff" ? "agent" : "staff"); setSetupStep(false); setError(""); }}
+          className="mb-3 w-full rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-sm font-semibold text-primary transition-colors hover:bg-primary/15"
+        >
+          {mode === "staff" ? "Agent username login" : "Back to staff email login"}
+        </button>
         <p className="text-sm text-muted-foreground">
           New Staff?{" "}
           <Link to="/register" className="font-medium text-primary transition-smooth hover:text-primary/80">

@@ -46,6 +46,23 @@ export async function loginWithEmail(email, password) {
   return storeAuthUser(data.user, data.sessionToken);
 }
 
+export async function loginAgentWithUsername(username, password) {
+  const data = await request("/auth/agent-login", { username, passwordHash: password });
+  if (data.requiresSetup) return data;
+  return storeAuthUser(data.user, data.sessionToken);
+}
+
+export async function completeAgentSetup(payload) {
+  const data = await request("/auth/agent-complete-setup", {
+    username: payload.username,
+    temporaryPassword: payload.temporaryPassword,
+    phone: payload.phone,
+    token: payload.token,
+    newPasswordHash: payload.newPassword,
+  });
+  return storeAuthUser(data.user, data.sessionToken);
+}
+
 export async function registerWithEmail(payload) {
   return request("/auth/register", {
     ...payload,

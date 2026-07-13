@@ -12,11 +12,14 @@ export default function AppLayout() {
   const { user, portalSettings } = useAuth();
   const location = useLocation();
   const isSusuAgent = String(user?.department || '').trim().toUpperCase() === 'SUSU AGENT';
+  const canManageCustomers = user?.role === 'OwnerAdmin' || user?.role === 'Supervisor';
   const mobileNavPaths = isSusuAgent
-    ? ['/', '/field-collection', '/customers', '/transactions', '/directory', '/reports']
+    ? ['/', '/field-collection', '/transactions', '/directory', '/reports']
     : ['/', '/customers', '/transactions', '/directory', '/reports'];
   const bottomItems = navItems.filter((item) =>
-    mobileNavPaths.includes(item.path) && (!item.agentOnly || isSusuAgent)
+    mobileNavPaths.includes(item.path) &&
+    (!item.agentOnly || isSusuAgent) &&
+    (!item.customerManagerOnly || canManageCustomers)
   );
   const mobileGridClass = bottomItems.length === 6 ? 'grid-cols-6' : 'grid-cols-5';
   const shortMobileLabel = (label) =>

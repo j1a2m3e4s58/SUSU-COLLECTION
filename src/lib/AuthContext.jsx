@@ -1,7 +1,9 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import {
   clearStoredAuthUser,
+  completeAgentSetup,
   getStoredAuthUser,
+  loginAgentWithUsername,
   loginWithEmail,
   logoutFromServer,
   storeAuthUser,
@@ -61,6 +63,22 @@ export const AuthProvider = ({ children }) => {
     return authUser;
   };
 
+  const loginAgent = async (username, password) => {
+    const result = await loginAgentWithUsername(username, password);
+    if (result?.requiresSetup) return result;
+    const authUser = normalizeUser(result);
+    setUser(authUser);
+    pingPresence(authUser.id).catch(() => {});
+    return authUser;
+  };
+
+  const completeAgentFirstLogin = async (payload) => {
+    const authUser = normalizeUser(await completeAgentSetup(payload));
+    setUser(authUser);
+    pingPresence(authUser.id).catch(() => {});
+    return authUser;
+  };
+
   const logout = async () => {
     await logoutPresence(user?.id).catch(() => {});
     await logoutFromServer();
@@ -88,6 +106,8 @@ export const AuthProvider = ({ children }) => {
       authChecked: !isLoadingAuth,
       refreshPortalSettings,
       login,
+      loginAgent,
+      completeAgentFirstLogin,
       logout,
       setUser,
       updateUser,

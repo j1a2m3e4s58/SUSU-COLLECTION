@@ -714,6 +714,15 @@ def normalize_phone(value: object) -> str:
     return phone
 
 
+def normalize_account_number(value: object) -> str:
+    account_number = str(value or "").strip().replace(" ", "")
+    if not account_number.isdigit():
+        raise ValueError("Account number must contain only digits")
+    if len(account_number) != 13:
+        raise ValueError("Account number must be exactly 13 digits")
+    return account_number
+
+
 def normalize_customer_status(value: object) -> str:
     status = str(value or "active").strip().lower()
     if status not in VALID_CUSTOMER_STATUSES:
@@ -829,7 +838,12 @@ def read_json_file(path: str, default):
 
 
 def normalize_user(raw: dict) -> dict:
-    email = validate_email(str(raw.get("email", "")))
+    raw_email = str(raw.get("email", "")).strip().lower()
+    login_username = str(raw.get("loginUsername", "") or raw.get("username", "")).strip().lower()
+    if raw_email.endswith("@agents.local") or (not raw_email and login_username):
+        email = raw_email or f"{login_username}@agents.local"
+    else:
+        email = validate_email(raw_email)
     department = str(raw.get("department", "")).strip().upper()
     if department not in SUSU_DEPARTMENTS:
         department = "SUSU AGENT"
@@ -860,6 +874,11 @@ def normalize_user(raw: dict) -> dict:
         "lastSeen": normalize_last_seen_ms(raw.get("lastSeen", 0)),
         "registrationTime": int(raw.get("registrationTime", 0) or 0),
         "isArchived": bool(raw.get("isArchived", False)),
+        "loginUsername": login_username,
+        "createdBySupervisorId": str(raw.get("createdBySupervisorId", "") or "").strip(),
+        "createdBySupervisorName": str(raw.get("createdBySupervisorName", "") or "").strip(),
+        "forcePasswordChange": bool(raw.get("forcePasswordChange", False)),
+        "setupComplete": bool(raw.get("setupComplete", True)),
     }
 
 
@@ -1656,12 +1675,52 @@ def is_susu_agent(user: dict | None) -> bool:
     return bool(user) and str(user.get("department", "")).strip().upper() == "SUSU AGENT"
 
 
+def can_manage_agents_and_customers(user: dict | None) -> bool:
+    return is_global_manager(user) or is_assigned_supervisor(user)
+
+
+def managed_branch_for_user(user: dict, requested_branch: object = None) -> str:
+    requested = str(requested_branch or "").strip().upper()
+    if is_global_manager(user):
+        return normalize_portal_branch_name(requested or user.get("branch"))
+    managed = normalize_scope_list(user.get("managedBranches"), empty_default=[])
+    branch = requested or str(user.get("branch") or "").strip().upper()
+    if not branch and managed:
+        branch = managed[0]
+    branch = normalize_portal_branch_name(branch)
+    if not branch_allowed_for_user(user, branch):
+        raise ValueError("You can only manage records for your assigned branch.")
+    return branch
+
+
+def normalize_agent_username(value: object) -> str:
+    username = str(value or "").strip().lower()
+    if len(username) < 3:
+        raise ValueError("Username must be at least 3 characters.")
+    allowed = set("abcdefghijklmnopqrstuvwxyz0123456789._-")
+    if any(char not in allowed for char in username):
+        raise ValueError("Username can only contain letters, numbers, dot, dash, and underscore.")
+    return username
+
+
+def agent_password_key(username: str) -> str:
+    return f"username:{normalize_agent_username(username)}"
+
+
+def find_user_by_username(users: list[dict], username: str):
+    normalized = normalize_agent_username(username)
+    return next((user for user in users if str(user.get("loginUsername", "")).strip().lower() == normalized), None)
+
+
 def can_view_operational_record(user: dict, item: dict) -> bool:
     if is_global_manager(user) or user_has_permission(user, "userManagement"):
         return True
     branch = str(item.get("branch_name") or item.get("branch_id") or item.get("branch") or "").strip().upper()
     if is_assigned_supervisor(user):
         return branch_allowed_for_user(user, branch)
+    is_customer_record = "account_number" in item and "amount" not in item and "agent_id" not in item
+    if is_susu_agent(user) and is_customer_record:
+        return branch == str(user.get("branch") or "").strip().upper()
     owner_ids = {
         str(item.get("createdById", "") or ""),
         str(item.get("agent_id", "") or ""),
@@ -2799,10 +2858,12 @@ def create_customer():
     data, error = require_json()
     if error:
         return error
+    if not can_manage_agents_and_customers(auth_user):
+        return jsonify({"error": "Only supervisors or owner admin can add customers."}), 403
     customers = load_json_list_store(CUSTOMERS_STORE_PATH)
     try:
         account_name = normalize_required_text(data.get("account_name"), "Account name")
-        account_number = normalize_required_text(data.get("account_number"), "Account number")
+        account_number = normalize_account_number(data.get("account_number"))
         phone = normalize_phone(data.get("phone"))
         requested_branch = normalize_portal_branch_name(
             data.get("branch_name") or data.get("branch") or auth_user.get("branch")
@@ -2812,12 +2873,10 @@ def create_customer():
         return jsonify({"error": str(exc)}), 400
     if any(str(item.get("account_number", "")).strip() == account_number for item in customers):
         return jsonify({"error": "Customer account number already exists"}), 400
-    if is_global_manager(auth_user) or user_has_permission(auth_user, "userManagement") or is_assigned_supervisor(auth_user):
-        branch_name = requested_branch
-        if is_assigned_supervisor(auth_user) and not branch_allowed_for_user(auth_user, branch_name):
-            return jsonify({"error": "You can only add customers for your assigned branch."}), 403
-    else:
-        branch_name = normalize_portal_branch_name(auth_user.get("branch") or requested_branch)
+    try:
+        branch_name = managed_branch_for_user(auth_user, requested_branch)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 403
     customer = {
         "id": f"cust-{now_ms()}-{secrets.token_hex(3)}",
         "account_name": account_name,
@@ -2863,12 +2922,14 @@ def update_customer(customer_id: str):
         return jsonify({"error": "Customer not found"}), 404
     if not can_view_operational_record(auth_user, customer):
         return jsonify({"error": "Access denied"}), 403
+    if not can_manage_agents_and_customers(auth_user):
+        return jsonify({"error": "Only supervisors or owner admin can edit customers."}), 403
     before = dict(customer)
     try:
         if "account_name" in data:
             customer["account_name"] = normalize_required_text(data.get("account_name"), "Account name")
         if "account_number" in data:
-            account_number = normalize_required_text(data.get("account_number"), "Account number")
+            account_number = normalize_account_number(data.get("account_number"))
             duplicate = next(
                 (
                     item
@@ -2894,10 +2955,6 @@ def update_customer(customer_id: str):
     customer["branch_id"] = customer.get("branch_name", "")
     if is_assigned_supervisor(auth_user) and not branch_allowed_for_user(auth_user, customer["branch_name"]):
         return jsonify({"error": "You can only manage customers in your assigned branch."}), 403
-    if not (is_global_manager(auth_user) or user_has_permission(auth_user, "userManagement") or is_assigned_supervisor(auth_user)):
-        own_branch = str(auth_user.get("branch") or "").strip().upper()
-        if customer["branch_name"] != own_branch:
-            return jsonify({"error": "You cannot move customers to another branch."}), 403
     customer["updatedAt"] = now_ms()
     save_json_list_store(CUSTOMERS_STORE_PATH, customers)
     if before.get("customer_status") != customer.get("customer_status"):
@@ -2928,6 +2985,82 @@ def update_customer(customer_id: str):
         link_to="/customers",
     )
     return jsonify({"ok": True, "customer": customer})
+
+
+@app.route("/api/customers/import", methods=["POST", "OPTIONS"])
+def import_customers():
+    preflight = handle_options()
+    if preflight:
+        return preflight
+    _, auth_user, error = require_authenticated_user()
+    if error:
+        return error
+    if not can_manage_agents_and_customers(auth_user):
+        return jsonify({"error": "Only supervisors or owner admin can import customers."}), 403
+    data, error = require_json()
+    if error:
+        return error
+    rows = data.get("customers")
+    if not isinstance(rows, list) or not rows:
+        return jsonify({"error": "Upload must contain at least one customer row."}), 400
+    try:
+        import_branch = managed_branch_for_user(auth_user, data.get("branch"))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 403
+    customers = load_json_list_store(CUSTOMERS_STORE_PATH)
+    existing_numbers = {str(item.get("account_number", "")).strip() for item in customers}
+    created = []
+    skipped = []
+    for index, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            skipped.append({"row": index, "reason": "Invalid row"})
+            continue
+        try:
+            account_name = normalize_required_text(
+                row.get("account_name") or row.get("Account Name") or row.get("name"),
+                "Account name",
+            )
+            account_number = normalize_account_number(
+                row.get("account_number") or row.get("Account Number") or row.get("account"),
+            )
+            branch_name = managed_branch_for_user(
+                auth_user,
+                row.get("branch") or row.get("Branch") or import_branch,
+            )
+        except ValueError as exc:
+            skipped.append({"row": index, "reason": str(exc)})
+            continue
+        if account_number in existing_numbers:
+            skipped.append({"row": index, "reason": "Duplicate account number"})
+            continue
+        customer = {
+            "id": f"cust-{now_ms()}-{secrets.token_hex(3)}",
+            "account_name": account_name,
+            "account_number": account_number,
+            "phone": "",
+            "branch_id": branch_name,
+            "branch_name": branch_name,
+            "customer_status": "active",
+            "address": "",
+            "total_deposits": 0,
+            "last_deposit_date": None,
+            "createdAt": now_ms(),
+            "createdBy": auth_user["fullname"],
+            "createdById": auth_user["id"],
+            "createdByEmail": auth_user["email"],
+            "importedBy": auth_user["fullname"],
+        }
+        customers.append(customer)
+        existing_numbers.add(account_number)
+        created.append(customer)
+    if created:
+        save_json_list_store(CUSTOMERS_STORE_PATH, customers)
+        record_audit_log(
+            auth_user,
+            "IMPORT_CUSTOMERS",
+            {"branch": import_branch, "created": len(created), "skipped": len(skipped)},
+        )
+    return jsonify({"ok": True, "created": created, "createdCount": len(created), "skipped": skipped})
 
 
 @app.route("/api/collections", methods=["GET"])
@@ -3274,7 +3407,7 @@ def update_staff(user_id: str):
     preflight = handle_options()
     if preflight:
         return preflight
-    _, auth_user, error = require_owner_admin()
+    _, auth_user, error = require_authenticated_user()
     if error:
         return error
     data, error = require_json()
@@ -3284,6 +3417,9 @@ def update_staff(user_id: str):
     user = find_user_by_id(users, user_id)
     if not user:
         return jsonify({"error": "Staff member not found"}), 404
+    owner_actor = is_owner_admin(auth_user)
+    if not owner_actor and not (can_manage_agents_and_customers(auth_user) and is_susu_agent(user)):
+        return jsonify({"error": "Only owner admin can edit this staff member."}), 403
     if not can_view_staff_record(auth_user, user):
         return scoped_access_denial(auth_user)
     previous_active = bool(user.get("isActive", False))
@@ -3313,7 +3449,7 @@ def update_staff(user_id: str):
             return jsonify({"error": str(exc)}), 400
     if "position" in data:
         user["position"] = str(data.get("position", "")).strip() or user["position"]
-    if "department" in data and requested_department:
+    if "department" in data and requested_department and owner_actor:
         user["department"] = requested_department
         if user.get("role") != "Supervisor":
             user["role"] = role_from_department(requested_department)
@@ -3322,26 +3458,28 @@ def update_staff(user_id: str):
             user["branch"] = normalize_portal_branch_name(data.get("branch"))
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
-    if "role" in data:
+        if not owner_actor and not branch_allowed_for_user(auth_user, user["branch"]):
+            return jsonify({"error": "You can only assign agents inside your branch scope."}), 403
+    if "role" in data and owner_actor:
         requested_role = str(data.get("role", "")).strip()
         if requested_role in {"GeneralStaff", "Supervisor"}:
             user["role"] = requested_role
-    if "managedBranches" in data:
+    if "managedBranches" in data and owner_actor:
         user["managedBranches"] = normalize_scope_list(
             data.get("managedBranches"),
             empty_default=["ALL"] if user["role"] in GLOBAL_MANAGER_ROLES else [],
         )
-    if "managedDepartmentsByBranch" in data:
+    if "managedDepartmentsByBranch" in data and owner_actor:
         user["managedDepartmentsByBranch"] = normalize_managed_departments_by_branch(
             data.get("managedDepartmentsByBranch")
         )
-    if user["role"] != "Supervisor":
+    if owner_actor and user["role"] != "Supervisor":
         user["managedBranches"] = normalize_scope_list(
             user.get("managedBranches"),
             empty_default=["ALL"] if user["role"] in GLOBAL_MANAGER_ROLES else [],
         )
         user["managedDepartmentsByBranch"] = {}
-    if "permissions" in data:
+    if "permissions" in data and owner_actor:
         user["permissions"] = normalize_user_permissions(data.get("permissions"), user["role"])
     else:
         user["permissions"] = normalize_user_permissions(user.get("permissions"), user["role"])
@@ -3474,9 +3612,11 @@ def delete_staff(user_id: str):
     preflight = handle_options()
     if preflight:
         return preflight
-    _, auth_user, error = require_owner_admin()
+    _, auth_user, error = require_authenticated_user()
     if error:
         return error
+    if not can_manage_agents_and_customers(auth_user):
+        return jsonify({"error": "Only supervisors or owner admin can remove agents."}), 403
     users = load_user_store()
     user = find_user_by_id(users, user_id)
     if not user:
@@ -3487,9 +3627,14 @@ def delete_staff(user_id: str):
         return scoped_access_denial(auth_user)
     if user["role"] in {"OwnerAdmin", "SuperAdmin"}:
         return jsonify({"error": "Cannot permanently remove Owner or Super Admin."}), 400
+    if not is_global_manager(auth_user) and not is_susu_agent(user):
+        return jsonify({"error": "Supervisors can only remove SUSU agents."}), 403
     users = [item for item in users if item["id"] != user_id]
     passwords = load_password_store()
     passwords.pop(user["email"], None)
+    username = str(user.get("loginUsername") or "").strip()
+    if username:
+        passwords.pop(agent_password_key(username), None)
     pending = load_pending_verifications()
     pending.pop(user["email"], None)
     save_user_store(users)
@@ -3504,6 +3649,102 @@ def delete_staff(user_id: str):
         link_to="/directory",
     )
     return jsonify({"ok": True})
+
+
+@app.route("/api/agents/create", methods=["POST", "OPTIONS"])
+def create_agent_account():
+    preflight = handle_options()
+    if preflight:
+        return preflight
+    _, auth_user, error = require_authenticated_user()
+    if error:
+        return error
+    if not can_manage_agents_and_customers(auth_user):
+        return jsonify({"error": "Only supervisors or owner admin can add agents."}), 403
+    data, error = require_json()
+    if error:
+        return error
+    try:
+        username = normalize_agent_username(data.get("username"))
+        temp_password = str(data.get("temporaryPassword") or "").strip()
+        phone = normalize_phone(data.get("phone"))
+        branch = managed_branch_for_user(auth_user, data.get("branch"))
+        fullname = str(data.get("fullname") or username).strip()
+        if len(temp_password) < 6:
+            return jsonify({"error": "Temporary password must be at least 6 characters."}), 400
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    users = load_user_store()
+    if find_user_by_username(users, username):
+        return jsonify({"error": "Username already exists."}), 400
+    synthetic_email = f"{username}@agents.local"
+    if find_user_by_email(users, synthetic_email):
+        return jsonify({"error": "Agent already exists."}), 400
+    user = normalize_user({
+        "id": f"agent-{now_ms()}-{secrets.token_hex(3)}",
+        "fullname": fullname,
+        "phone": phone,
+        "email": synthetic_email,
+        "role": "GeneralStaff",
+        "position": "SUSU Agent",
+        "department": "SUSU AGENT",
+        "branch": branch,
+        "imageFile": None,
+        "isActive": True,
+        "isVerified": True,
+        "lastSeen": 0,
+        "registrationTime": now_ms(),
+        "isArchived": False,
+        "loginUsername": username,
+        "createdBySupervisorId": auth_user["id"],
+        "createdBySupervisorName": auth_user["fullname"],
+        "forcePasswordChange": True,
+        "setupComplete": False,
+    })
+    users.append(user)
+    passwords = load_password_store()
+    passwords[agent_password_key(username)] = hash_password_for_storage(temp_password)
+    save_user_store(users)
+    save_password_store(passwords)
+    record_audit_log(auth_user, "CREATE_AGENT_ACCOUNT", staff_audit_target(user, {"username": username}))
+    return jsonify({"ok": True, "user": user})
+
+
+@app.route("/api/agents/<user_id>/reset-password", methods=["POST", "OPTIONS"])
+def reset_agent_password(user_id: str):
+    preflight = handle_options()
+    if preflight:
+        return preflight
+    _, auth_user, error = require_authenticated_user()
+    if error:
+        return error
+    if not can_manage_agents_and_customers(auth_user):
+        return jsonify({"error": "Only supervisors or owner admin can reset agent passwords."}), 403
+    data, error = require_json()
+    if error:
+        return error
+    temp_password = str(data.get("temporaryPassword") or "").strip()
+    if len(temp_password) < 6:
+        return jsonify({"error": "Temporary password must be at least 6 characters."}), 400
+    users = load_user_store()
+    user = find_user_by_id(users, user_id)
+    if not user or not is_susu_agent(user):
+        return jsonify({"error": "Agent not found."}), 404
+    if not can_view_staff_record(auth_user, user):
+        return scoped_access_denial(auth_user)
+    username = str(user.get("loginUsername") or "").strip().lower()
+    if not username:
+        return jsonify({"error": "This agent does not have a username login."}), 400
+    user["forcePasswordChange"] = True
+    user["setupComplete"] = False
+    passwords = load_password_store()
+    passwords[agent_password_key(username)] = hash_password_for_storage(temp_password)
+    save_user_store(users)
+    save_password_store(passwords)
+    revoke_user_sessions(user_id)
+    record_audit_log(auth_user, "RESET_AGENT_PASSWORD", staff_audit_target(user, {"username": username}))
+    return jsonify({"ok": True, "user": user})
 
 
 @app.route("/api/auth/register", methods=["POST", "OPTIONS"])
@@ -3695,6 +3936,84 @@ def auth_login():
         save_user_store(users)
         session_token = issue_session(user["id"])
         record_audit_log(user, "LOGIN", staff_audit_target(user))
+        return jsonify({"ok": True, "user": user, "sessionToken": session_token})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/api/auth/agent-login", methods=["POST", "OPTIONS"])
+def auth_agent_login():
+    preflight = handle_options()
+    if preflight:
+        return preflight
+    data, error = require_json()
+    if error:
+        return error
+    try:
+        username = normalize_agent_username(data.get("username"))
+        password = str(data.get("passwordHash", ""))
+        if not password:
+            return jsonify({"error": "Password is required"}), 400
+        users = load_user_store()
+        user = find_user_by_username(users, username)
+        passwords = load_password_store()
+        stored_password = passwords.get(agent_password_key(username))
+        if not user or not stored_password or not verify_password(stored_password, password):
+            record_audit_log(None, "AGENT_LOGIN_FAILED", {"username": username, "reason": "invalid_credentials"})
+            return jsonify({"error": "Invalid username or password"}), 401
+        if user["isArchived"] or not user["isActive"]:
+            record_audit_log(None, "AGENT_LOGIN_FAILED", {"username": username, "reason": "inactive_or_missing_account"})
+            return jsonify({"error": "Invalid username or password"}), 401
+        if bool(user.get("forcePasswordChange", False)) or not bool(user.get("setupComplete", True)):
+            return jsonify({
+                "ok": True,
+                "requiresSetup": True,
+                "username": username,
+                "message": "First login requires phone verification and password reset.",
+            })
+        user["lastSeen"] = now_ms()
+        save_user_store(users)
+        session_token = issue_session(user["id"])
+        record_audit_log(user, "AGENT_LOGIN", staff_audit_target(user, {"username": username}))
+        return jsonify({"ok": True, "user": user, "sessionToken": session_token})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/api/auth/agent-complete-setup", methods=["POST", "OPTIONS"])
+def auth_agent_complete_setup():
+    preflight = handle_options()
+    if preflight:
+        return preflight
+    data, error = require_json()
+    if error:
+        return error
+    try:
+        username = normalize_agent_username(data.get("username"))
+        temp_password = str(data.get("temporaryPassword") or "")
+        new_password = str(data.get("newPasswordHash") or "")
+        phone = normalize_phone(data.get("phone"))
+        token_code = "".join(ch for ch in str(data.get("token") or "") if ch.isdigit())
+        if token_code != "1234":
+            return jsonify({"error": "Invalid verification token."}), 400
+        if len(new_password) < 8:
+            return jsonify({"error": "New password must be at least 8 characters."}), 400
+        users = load_user_store()
+        user = find_user_by_username(users, username)
+        passwords = load_password_store()
+        stored_password = passwords.get(agent_password_key(username))
+        if not user or not stored_password or not verify_password(stored_password, temp_password):
+            return jsonify({"error": "Invalid username or temporary password."}), 401
+        if "".join(ch for ch in str(user.get("phone") or "") if ch.isdigit()) != "".join(ch for ch in phone if ch.isdigit()):
+            return jsonify({"error": "Phone number does not match the supervisor record."}), 400
+        user["forcePasswordChange"] = False
+        user["setupComplete"] = True
+        user["lastSeen"] = now_ms()
+        passwords[agent_password_key(username)] = hash_password_for_storage(new_password)
+        save_user_store(users)
+        save_password_store(passwords)
+        session_token = issue_session(user["id"])
+        record_audit_log(user, "AGENT_SETUP_COMPLETED", staff_audit_target(user, {"username": username}))
         return jsonify({"ok": True, "user": user, "sessionToken": session_token})
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400

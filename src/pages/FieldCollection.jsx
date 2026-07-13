@@ -54,21 +54,43 @@ export default function FieldCollection() {
   }, [canUseAgentScope, matchesSelectedAgent, selectedAgent]);
 
   useEffect(() => {
-    const q = searchQuery.toLowerCase().trim();
+    const raw = searchQuery.trim();
+    const digits = raw.replace(/\D/g, '');
     setDuplicateWarning(null);
-    if (!q) {
+    setError('');
+    if (!raw) {
       setSearchResults([]);
       return;
     }
-    setSearchResults(customers.filter(c =>
-      c.account_name?.toLowerCase().includes(q) ||
-      c.account_number?.toLowerCase().includes(q) ||
-      c.phone?.includes(q)
-    ).slice(0, 12));
+    if (/\D/.test(raw)) {
+      setSearchResults([]);
+      setError('Use the customer account number only. Name search is not allowed for deposits.');
+      return;
+    }
+    if (digits.length !== 13) {
+      setSearchResults([]);
+      setError('Enter the full 13-digit account number before searching.');
+      return;
+    }
+    const match = customers.find(c => String(c.account_number || '').trim() === digits);
+    setSearchResults(match ? [match] : []);
+    if (!match) setError('Account number not found.');
   }, [searchQuery, customers]);
 
   const handleSearch = async () => {
-    if (!searchQuery.trim()) return;
+    const raw = searchQuery.trim();
+    const digits = raw.replace(/\D/g, '');
+    if (!raw) return;
+    if (/\D/.test(raw)) {
+      setSearchResults([]);
+      setError('Use the customer account number only. Name search is not allowed for deposits.');
+      return;
+    }
+    if (digits.length !== 13) {
+      setSearchResults([]);
+      setError('Enter exactly 13 digits. The system will not search partial account numbers.');
+      return;
+    }
     setSearching(true);
     setError('');
     setSelectedCustomer(null);
@@ -81,12 +103,9 @@ export default function FieldCollection() {
         return true;
       });
       setCustomers(all);
-      const q = searchQuery.toLowerCase().trim();
-      setSearchResults(all.filter(c =>
-        c.account_name?.toLowerCase().includes(q) ||
-        c.account_number?.toLowerCase().includes(q) ||
-        c.phone?.includes(q)
-      ));
+      const match = all.find(c => String(c.account_number || '').trim() === digits);
+      setSearchResults(match ? [match] : []);
+      if (!match) setError('Account number not found.');
     } catch (err) { setError(err.message || 'Search failed. Please try again.'); }
     setSearching(false);
   };
@@ -220,7 +239,9 @@ export default function FieldCollection() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleSearch()}
-              placeholder="Search by account name, account number, or phone..."
+              inputMode="numeric"
+              maxLength={13}
+              placeholder="Enter exact 13-digit account number"
               className="w-full bg-muted/50 border border-border rounded-lg pl-10 pr-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40" />
           </div>
           <button onClick={handleSearch} disabled={searching || !searchQuery.trim()}
@@ -232,7 +253,7 @@ export default function FieldCollection() {
 
         {searchResults.length > 0 && (
           <div className="mt-4 space-y-2">
-            <p className="text-xs text-muted-foreground mb-2">{searchResults.length} customer(s) found</p>
+            <p className="text-xs text-muted-foreground mb-2">Exact account match found</p>
             {searchResults.map(c => (
               <button key={c.id} onClick={() => handleSelectCustomer(c)}
                 className="w-full flex items-center justify-between p-3 rounded-lg bg-muted/30 hover:bg-muted/50 border border-border transition-colors text-left">
@@ -250,8 +271,11 @@ export default function FieldCollection() {
             ))}
           </div>
         )}
-        {searchResults.length === 0 && !searching && searchQuery && (
-          <p className="text-sm text-muted-foreground mt-4 text-center py-4">No active customers found. Check Customer Management or reactivate the customer first.</p>
+        {error && !selectedCustomer && (
+          <p className="text-sm text-red-500 mt-4 text-center py-4">{error}</p>
+        )}
+        {searchResults.length === 0 && !searching && searchQuery && !error && (
+          <p className="text-sm text-muted-foreground mt-4 text-center py-4">Account number not found.</p>
         )}
       </div>
 

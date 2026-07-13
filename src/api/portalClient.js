@@ -121,6 +121,22 @@ export async function updateStaff(userId, payload) {
   return normalizeUser(data.user || data.ok);
 }
 
+export async function createAgentAccount(payload) {
+  const data = await apiRequest("/agents/create", {
+    method: "POST",
+    body: payload,
+  });
+  return normalizeUser(data.user);
+}
+
+export async function resetAgentPassword(userId, temporaryPassword) {
+  const data = await apiRequest(`/agents/${userId}/reset-password`, {
+    method: "POST",
+    body: { temporaryPassword },
+  });
+  return normalizeUser(data.user);
+}
+
 export async function deleteStaff(userId) {
   return apiRequest(`/staff/${userId}/delete`, {
     method: "POST",
@@ -153,6 +169,13 @@ export async function createCustomer(payload) {
     body: payload,
   });
   return data.customer;
+}
+
+export async function importCustomers(payload) {
+  return apiRequest("/customers/import", {
+    method: "POST",
+    body: payload,
+  });
 }
 
 export async function updateCustomer(customerId, payload) {
