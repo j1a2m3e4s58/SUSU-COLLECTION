@@ -1,5 +1,13 @@
-const CACHE_NAME = "susu-portal-shell-v1";
-const APP_SHELL = ["/", "/manifest.json", "/favicon.svg", "/assets/images/bcb-logo.png"];
+const CACHE_NAME = "susu-portal-shell-v2";
+const APP_SHELL = [
+  "/",
+  "/manifest.json",
+  "/favicon.svg",
+  "/assets/icons/icon-192.png",
+  "/assets/icons/icon-512.png",
+  "/assets/icons/apple-touch-icon.png",
+  "/assets/images/bcb-logo.png",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
