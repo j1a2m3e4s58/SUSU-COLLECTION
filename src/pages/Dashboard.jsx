@@ -191,36 +191,36 @@ export default function Dashboard() {
 
       {(!canUseAgentScope || selectedAgent) && (
         <>
-          <div className="rounded-xl border border-border bg-card p-4">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-blue-500">Viewing records for</p>
-                <h2 className="mt-1 flex items-center gap-2 font-heading text-xl font-bold text-foreground">
-                  <CalendarDays className="h-5 w-5 text-blue-500" />
-                  {selectedLabel}
+          <div className="rounded-xl border border-border bg-card p-4 sm:p-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-500">Viewing records for</p>
+                <h2 className="mt-2 flex min-w-0 items-start gap-2 font-heading text-[1.6rem] font-bold leading-tight text-foreground sm:items-center sm:text-2xl">
+                  <CalendarDays className="mt-1 h-5 w-5 shrink-0 text-blue-500 sm:mt-0" />
+                  <span className="break-words">{selectedLabel}</span>
                 </h2>
-                <p className="text-xs text-muted-foreground">
+                <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted-foreground sm:text-xs">
                   Switch to yesterday, a past day, or a whole month using your existing data permissions.
                 </p>
               </div>
-              <div className="grid gap-2 sm:grid-cols-2 lg:flex">
-                <button type="button" onClick={() => selectDay(today)} className="rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium text-foreground hover:bg-muted">
+              <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:w-auto">
+                <button type="button" onClick={() => selectDay(today)} className="rounded-lg border border-border bg-background px-3 py-3 text-sm font-medium text-foreground hover:bg-muted sm:py-2">
                   Today
                 </button>
-                <button type="button" onClick={() => selectDay(yesterday)} className="rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium text-foreground hover:bg-muted">
+                <button type="button" onClick={() => selectDay(yesterday)} className="rounded-lg border border-border bg-background px-3 py-3 text-sm font-medium text-foreground hover:bg-muted sm:py-2">
                   Yesterday
                 </button>
                 <input
                   type="date"
                   value={selectedDate}
                   onChange={(event) => selectDay(event.target.value || today)}
-                  className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                  className="w-full rounded-lg border border-border bg-background px-3 py-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40 sm:py-2"
                 />
                 <input
                   type="month"
                   value={selectedMonth}
                   onChange={(event) => selectMonth(event.target.value)}
-                  className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                  className="w-full rounded-lg border border-border bg-background px-3 py-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40 sm:py-2"
                 />
               </div>
             </div>
