@@ -16,7 +16,12 @@ function cleanMessage(text) {
 }
 
 function elementIsVisible(element) {
-  if (!element || element.closest("[data-portal-toast-root]") || element.closest(".portal-toast")) {
+  if (
+    !element ||
+    element.dataset.feedbackOverlayConsumed === "true" ||
+    element.closest("[data-portal-toast-root]") ||
+    element.closest(".portal-toast")
+  ) {
     return false;
   }
   const rect = element.getBoundingClientRect();
@@ -66,6 +71,7 @@ export default function FeedbackOverlayBridge() {
         description: message,
         duration: variant === "destructive" ? 6200 : 4800,
       });
+      element.dataset.feedbackOverlayConsumed = "true";
     };
 
     const scan = (root = document.body) => {
