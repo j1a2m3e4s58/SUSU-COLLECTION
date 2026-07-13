@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import ControlledSelect from "@/components/ui/controlled-select";
 import {
   Dialog,
   DialogContent,
@@ -373,14 +374,16 @@ export default function PortalControl() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <select
+            <ControlledSelect
               value={draft.appMode || "test"}
-              onChange={(event) => update("appMode", event.target.value)}
+              onChange={(value) => update("appMode", value)}
+              options={[
+                { value: "test", label: "Test Mode" },
+                { value: "live", label: "Live Mode" },
+              ]}
+              placeholder="Select mode"
               className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
-            >
-              <option value="test">Test Mode</option>
-              <option value="live">Live Mode</option>
-            </select>
+            />
             <Button type="button" variant="outline" className="gap-2 bg-background/70" onClick={downloadBackup} disabled={exporting}>
               <Download className="h-4 w-4" />
               {exporting ? "Exporting..." : "Export Backup"}

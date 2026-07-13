@@ -13,13 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import ConfirmActionDialog from "@/components/ui/confirm-action-dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import ControlledSelect from "@/components/ui/controlled-select";
 import {
   archiveStaff,
   createAgentAccount,
@@ -115,34 +109,24 @@ function EditStaffDialog({ staff, branches, departments, open, onOpenChange, onS
 
           <div className="space-y-1.5">
             <Label htmlFor="edit-branch">Branch</Label>
-            <Select value={branch} onValueChange={setBranch}>
-              <SelectTrigger id="edit-branch">
-                <SelectValue placeholder="Select branch" />
-              </SelectTrigger>
-              <SelectContent>
-                {branches.map((item) => (
-                  <SelectItem key={item} value={item}>
-                    {item}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <ControlledSelect
+              value={branch}
+              onChange={setBranch}
+              options={branches}
+              placeholder="Select branch"
+              className="h-10 rounded-lg border-border bg-background text-sm"
+            />
           </div>
 
           <div className="space-y-1.5">
             <Label htmlFor="edit-department">SUSU Category</Label>
-            <Select value={department} onValueChange={setDepartment}>
-              <SelectTrigger id="edit-department">
-                <SelectValue placeholder="Select SUSU category" />
-              </SelectTrigger>
-              <SelectContent>
-                {departments.map((item) => (
-                  <SelectItem key={item} value={item}>
-                    {item}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <ControlledSelect
+              value={department}
+              onChange={setDepartment}
+              options={departments}
+              placeholder="Select SUSU category"
+              className="h-10 rounded-lg border-border bg-background text-sm"
+            />
           </div>
 
           {error && (
@@ -666,18 +650,13 @@ export default function Directory() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="agent-branch">Branch</Label>
-              <Select value={agentForm.branch} onValueChange={(value) => setAgentForm({ ...agentForm, branch: value })}>
-                <SelectTrigger id="agent-branch">
-                  <SelectValue placeholder="Select branch" />
-                </SelectTrigger>
-                <SelectContent>
-                  {addAgentBranches.map((item) => (
-                    <SelectItem key={item} value={item}>
-                      {item}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <ControlledSelect
+                value={agentForm.branch}
+                onChange={(value) => setAgentForm({ ...agentForm, branch: value })}
+                options={addAgentBranches}
+                placeholder="Select branch"
+                className="h-10 rounded-lg border-border bg-background text-sm"
+              />
             </div>
             <div className="rounded-lg border border-primary/20 bg-primary/10 p-3 text-xs text-muted-foreground">
               First login will ask for this phone number, token 1234, then a permanent password.

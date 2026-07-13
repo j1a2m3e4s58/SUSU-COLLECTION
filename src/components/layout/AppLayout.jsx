@@ -15,7 +15,7 @@ export default function AppLayout() {
   const canManageCustomers = user?.role === 'OwnerAdmin' || user?.role === 'Supervisor';
   const mobileNavPaths = isSusuAgent
     ? ['/', '/field-collection', '/transactions', '/directory', '/reports']
-    : ['/', '/customers', '/transactions', '/directory', '/reports'];
+    : ['/', '/customers', '/agents', '/transactions', '/directory', '/reports'];
   const bottomItems = navItems.filter((item) =>
     mobileNavPaths.includes(item.path) &&
     (!item.agentOnly || isSusuAgent) &&
@@ -26,7 +26,8 @@ export default function AppLayout() {
     label
       .replace('Field Collection', 'Collect')
       .replace('Transactions', 'Trans')
-      .replace('Dashboard', 'Home');
+      .replace('Dashboard', 'Home')
+      .replace('Agents', 'Agents');
 
   return (
     <div className="min-h-screen bg-background flex">

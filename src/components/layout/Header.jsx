@@ -31,7 +31,27 @@ export default function Header({ onMenuClick, user }) {
   const profileImage = resolveAssetUrl(user?.imageFile);
   const canAdmin = user?.role === 'OwnerAdmin';
   const canOwnerControl = user?.role === 'OwnerAdmin';
+  const canManageCustomers = user?.role === 'OwnerAdmin' || user?.role === 'Supervisor';
   const isSusuAgent = String(user?.department || '').trim().toUpperCase() === 'SUSU AGENT';
+  const managedBranches = Array.isArray(user?.managedBranches) && user.managedBranches.length
+    ? user.managedBranches
+    : [user?.branch].filter(Boolean);
+  const branchAllowed = (branch) => {
+    if (canOwnerControl) return true;
+    if (user?.role === 'Supervisor') return managedBranches.includes(branch);
+    return branch === user?.branch;
+  };
+  const recordBelongsToUser = (record) => {
+    if (!isSusuAgent) return true;
+    const userId = String(user?.id || '');
+    const userEmail = String(user?.email || '').trim().toLowerCase();
+    const userName = String(user?.fullname || user?.full_name || '').trim().toLowerCase();
+    return (
+      String(record.agent_id || record.created_by || record.staff_id || '') === userId ||
+      String(record.agent_email || '').trim().toLowerCase() === userEmail ||
+      String(record.agent_name || '').trim().toLowerCase() === userName
+    );
+  };
 
   const handleLogout = async () => {
     await logout();
@@ -81,8 +101,10 @@ export default function Header({ onMenuClick, user }) {
   const staticPages = [
     { title: 'Dashboard', subtitle: 'Overview and daily totals', path: '/', type: 'Page', icon: LayoutDashboard },
     ...(isSusuAgent ? [{ title: 'Field Collection', subtitle: 'Record customer deposits', path: '/field-collection', type: 'Page', icon: Receipt }] : []),
-    { title: 'Customers', subtitle: 'Active customer management', path: '/customers', type: 'Page', icon: Users },
-    { title: 'Inactive Customers', subtitle: 'Restore inactive customers', path: '/inactive-customers', type: 'Page', icon: UserX },
+    ...(canManageCustomers ? [
+      { title: 'Customers', subtitle: 'Active customer management', path: '/customers', type: 'Page', icon: Users },
+      { title: 'Inactive Customers', subtitle: 'Restore inactive customers', path: '/inactive-customers', type: 'Page', icon: UserX },
+    ] : []),
     { title: 'Directory', subtitle: 'Staff directory and presence', path: '/directory', type: 'Page', icon: Contact },
     { title: 'Transactions', subtitle: 'Collection transaction history', path: '/transactions', type: 'Page', icon: Receipt },
     { title: 'Reports', subtitle: 'Reports and exports', path: '/reports', type: 'Page', icon: Search },
@@ -90,6 +112,9 @@ export default function Header({ onMenuClick, user }) {
       { title: 'Branches', subtitle: 'Branch management', path: '/branches', type: 'Page', icon: LayoutDashboard },
       { title: 'Supervisor Management', subtitle: 'Assign supervisor scopes', path: '/supervisor-management', type: 'Page', icon: Contact },
       { title: 'Audit Log', subtitle: 'System audit trail', path: '/audit-log', type: 'Page', icon: Receipt },
+    ] : []),
+    ...(canManageCustomers ? [
+      { title: 'Agent Management', subtitle: 'Add agents, import customers, and reset agent logins', path: '/agents', type: 'Page', icon: Contact },
     ] : []),
     ...(canOwnerControl ? [
       { title: 'Portal Control', subtitle: 'Owner system settings', path: '/portal-control', type: 'Page', icon: LayoutDashboard },
@@ -103,7 +128,8 @@ export default function Header({ onMenuClick, user }) {
         ...staticPages
           .filter((item) => `${item.title} ${item.subtitle}`.toLowerCase().includes(query))
           .map((item) => ({ ...item, key: `page-${item.path}` })),
-        ...searchIndex.customers
+        ...(canManageCustomers ? searchIndex.customers
+          .filter((customer) => branchAllowed(customer.branch_name || customer.branch_id))
           .filter((customer) => [customer.account_name, customer.account_number, customer.phone, customer.branch_name, customer.customer_status].join(' ').toLowerCase().includes(query))
           .slice(0, 5)
           .map((customer) => ({
@@ -113,19 +139,23 @@ export default function Header({ onMenuClick, user }) {
             path: customer.customer_status === 'inactive' ? '/inactive-customers' : '/customers',
             type: 'Customer',
             icon: customer.customer_status === 'inactive' ? UserX : Users,
-          })),
+          })) : []),
         ...searchIndex.staff
+          .filter((member) => member.role !== 'OwnerAdmin')
+          .filter((member) => canOwnerControl || user?.role !== 'Supervisor' || branchAllowed(member.branch))
           .filter((member) => [member.fullname, member.email, member.phone, member.department, member.branch, member.role].join(' ').toLowerCase().includes(query))
           .slice(0, 5)
           .map((member) => ({
             key: `staff-${member.id}`,
             title: member.fullname,
-            subtitle: `${member.department || '-'} category - ${member.branch || '-'} - ${member.role || '-'}`,
+            subtitle: `${member.department || '-'} - ${member.branch || '-'} - ${member.role || '-'}`,
             path: '/directory',
             type: 'Staff',
             icon: Contact,
           })),
         ...searchIndex.collections
+          .filter(recordBelongsToUser)
+          .filter((item) => branchAllowed(item.branch_name || item.branch_id))
           .filter((item) => [item.transaction_reference, item.account_name, item.account_number, item.branch_name, item.agent_name].join(' ').toLowerCase().includes(query))
           .slice(0, 5)
           .map((item) => ({
@@ -182,7 +212,7 @@ export default function Header({ onMenuClick, user }) {
               className="w-full bg-muted/50 border border-border rounded-lg pl-10 pr-4 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/50 transition-all"
             />
             {searchOpen && globalSearch.trim() && (
-              <div className="absolute left-0 top-full z-50 mt-2 max-h-96 w-[min(82vw,22rem)] overflow-y-auto rounded-xl border border-border bg-popover p-2 shadow-2xl sm:right-0 sm:w-auto">
+              <div className="absolute left-0 top-full z-50 mt-2 max-h-96 w-[min(calc(100vw-2rem),26rem)] overflow-y-auto rounded-xl border border-border bg-popover p-2 shadow-2xl sm:right-0 sm:w-auto">
                 {suggestions.length === 0 ? (
                   <div className="px-3 py-4 text-center text-sm text-muted-foreground">
                     No matching options found
@@ -281,12 +311,12 @@ export default function Header({ onMenuClick, user }) {
       </div>
       <div className="border-t border-border/60 px-4 py-2 lg:px-6">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <p className="inline-flex items-center gap-2 text-xs font-medium text-muted-foreground">
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-medium text-muted-foreground">
             <CalendarDays className="h-3.5 w-3.5 text-blue-500" />
             Viewing {selectedScope === 'month' ? 'month' : 'day'}:
             <span className="text-foreground">{selectedLabel}</span>
           </p>
-          <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
+          <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:items-center">
             <button
               type="button"
               onClick={() => selectDay(formatDateKey(new Date()))}
@@ -305,13 +335,13 @@ export default function Header({ onMenuClick, user }) {
               type="date"
               value={selectedDate}
               onChange={(event) => event.target.value && selectDay(event.target.value)}
-              className="min-w-0 rounded-lg border border-border bg-muted/50 px-3 py-1.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+              className="h-9 min-w-0 rounded-lg border border-border bg-muted/50 px-3 py-1.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40"
             />
             <input
               type="month"
               value={selectedMonth}
               onChange={(event) => selectMonth(event.target.value)}
-              className="min-w-0 rounded-lg border border-border bg-muted/50 px-3 py-1.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+              className="h-9 min-w-0 rounded-lg border border-border bg-muted/50 px-3 py-1.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40"
             />
           </div>
         </div>

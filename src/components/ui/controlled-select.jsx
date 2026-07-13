@@ -30,7 +30,13 @@ export default function ControlledSelect({
       <SelectTrigger className={className}>
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
-      <SelectContent className={contentClassName}>
+      <SelectContent
+        align="start"
+        collisionPadding={12}
+        position="popper"
+        sideOffset={6}
+        className={`z-[120] max-h-[min(18rem,45vh)] min-w-[var(--radix-select-trigger-width)] overflow-y-auto rounded-xl border-border bg-popover shadow-2xl ${contentClassName}`}
+      >
         {emptyLabel && (
           <SelectItem value={emptyValue}>
             {emptyLabel}

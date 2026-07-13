@@ -327,31 +327,31 @@ export default function AgentManagement() {
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search agent name, code, or branch..."
               className={`w-full ${inputClass} pl-10`} />
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:w-auto lg:flex-wrap">
             <button onClick={() => { setShowCreateAgent(true); setError(''); }}
-              className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700">
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700">
               <Plus className="h-4 w-4" />
               Add Agent
             </button>
             <button onClick={() => { setShowImportCustomers(true); setError(''); }}
-              className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700">
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700">
               <Upload className="h-4 w-4" />
               Import Customers
             </button>
             <button onClick={exportDeleteBackup} disabled={exportingBackup}
-              className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50">
+              className="inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50">
               {exportingBackup ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
               Export Backup
             </button>
             {selectedIds.size > 0 && (
               <button onClick={() => { setDeleteBackupReady(false); setConfirmDelete(true); }} disabled={deletingSelected}
-                className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50">
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50">
                 {deletingSelected ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                 Delete Selected ({selectedIds.size})
               </button>
             )}
             <button onClick={exportAgentsPdf}
-              className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
               <FileText className="h-4 w-4" />
               Export PDF
             </button>
@@ -497,7 +497,7 @@ export default function AgentManagement() {
       {showCreateAgent && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowCreateAgent(false)} />
-          <div className="relative w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-2xl">
+          <div className="relative max-h-[calc(100vh-2rem)] w-full max-w-md overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-2xl sm:p-6">
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h2 className="font-heading text-lg font-bold text-foreground">Add Agent Login</h2>
@@ -529,7 +529,7 @@ export default function AgentManagement() {
       {showImportCustomers && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowImportCustomers(false)} />
-          <div className="relative w-full max-w-lg rounded-2xl border border-border bg-card p-6 shadow-2xl">
+          <div className="relative max-h-[calc(100vh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-2xl sm:p-6">
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h2 className="font-heading text-lg font-bold text-foreground">Import Customers</h2>
@@ -572,7 +572,7 @@ export default function AgentManagement() {
       {resetTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setResetTarget(null)} />
-          <div className="relative w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-2xl">
+          <div className="relative max-h-[calc(100vh-2rem)] w-full max-w-md overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-2xl sm:p-6">
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h2 className="font-heading text-lg font-bold text-foreground">Reset Agent Login</h2>
@@ -600,7 +600,7 @@ export default function AgentManagement() {
       {transferAgent && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setTransferAgent(null)} />
-          <div className="relative bg-card rounded-2xl border border-border w-full max-w-md p-6 shadow-2xl">
+          <div className="relative max-h-[calc(100vh-2rem)] w-full max-w-md overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-2xl sm:p-6">
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h2 className="font-heading text-lg font-bold text-foreground">Branch Transfer</h2>

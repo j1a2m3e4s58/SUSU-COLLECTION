@@ -78,7 +78,7 @@ export default function SupervisorManagement() {
     const q = search.trim().toLowerCase();
     if (!q) return staff;
     return staff.filter((member) =>
-      [member.fullname, member.email, member.branch, member.department, member.role]
+      [member.fullname, member.email, member.branch, member.role]
         .join(" ")
         .toLowerCase()
         .includes(q),
@@ -105,7 +105,7 @@ export default function SupervisorManagement() {
   function validateSupervisor() {
     if (role !== "Supervisor") return true;
     if (managedBranches.length === 0) {
-      setError("Assign at least one branch before saving a supervisor.");
+      setError("Assign at least one branch before saving a SUSU supervisor.");
       return false;
     }
     return true;
@@ -194,14 +194,14 @@ export default function SupervisorManagement() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wider text-blue-500">
-            Access and delegation
+            SUSU branch supervision
           </p>
           <h1 className="mt-1 flex items-center gap-2 font-heading text-2xl font-bold text-foreground lg:text-3xl">
             <ShieldCheck className="h-7 w-7 text-blue-500" />
             Supervisor Management
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Assign branch scope for SUSU supervisors.
+            Choose which branch records each supervisor can review and correct.
           </p>
         </div>
         <Link to="/directory">
@@ -254,7 +254,7 @@ export default function SupervisorManagement() {
                     <div className="min-w-0">
                       <p className="truncate text-sm font-semibold text-foreground">{member.fullname}</p>
                       <p className="truncate text-xs text-muted-foreground">
-                        {member.branch} - {member.department} category
+                        {member.branch} - {member.role === "Supervisor" ? "SUSU Supervisor" : "SUSU Staff"}
                       </p>
                     </div>
                     <Badge variant={member.role === "Supervisor" ? "default" : "outline"}>
@@ -273,7 +273,7 @@ export default function SupervisorManagement() {
                   <div>
                     <h2 className="font-heading text-xl font-bold text-foreground">{selected.fullname}</h2>
                     <p className="text-sm text-muted-foreground">
-                      {selected.email} - {selected.branch} - {selected.department} category
+                      {selected.email} - {selected.branch}
                     </p>
                   </div>
                   <Badge variant={role === "Supervisor" ? "default" : "outline"}>{role}</Badge>
@@ -287,7 +287,7 @@ export default function SupervisorManagement() {
                     <div className="space-y-2">
                       <h3 className="font-semibold text-foreground">Remove supervisor access</h3>
                       <p className="text-xs text-muted-foreground">
-                        Removes managed branch access for this supervisor.
+                        Removes managed branch access for this SUSU supervisor.
                       </p>
                       <Button variant="destructive" size="sm" disabled={saving || selected.role !== "Supervisor"} onClick={removeSupervisor}>
                         Remove Supervisor Access
@@ -302,7 +302,7 @@ export default function SupervisorManagement() {
                     <div className="flex-1 space-y-2">
                       <h3 className="font-semibold text-foreground">Transfer supervisor access</h3>
                       <p className="text-xs text-muted-foreground">
-                        Copies this supervisor's access to another staff member, then removes it here.
+                        Copies this supervisor branch access to another staff member, then removes it here.
                       </p>
                       <div className="flex flex-col gap-2 sm:flex-row">
                         <ControlledSelect
@@ -330,13 +330,13 @@ export default function SupervisorManagement() {
                     <ControlledSelect
                       value={role}
                       onChange={setRole}
-                      options={[{ value: 'GeneralStaff', label: 'Regular Staff' }, { value: 'Supervisor', label: 'Branch Supervisor' }]}
+                      options={[{ value: 'GeneralStaff', label: 'SUSU Staff' }, { value: 'Supervisor', label: 'SUSU Branch Supervisor' }]}
                       className="rounded-lg border-border bg-background text-sm"
                     />
                   </div>
 
                   <p className="rounded-lg border border-blue-500/20 bg-blue-500/10 p-3 text-sm text-muted-foreground">
-                    Supervisors can review SUSU agents only inside the branches selected here.
+                    Supervisors can review customers, agents, transactions, reports, and corrections only inside the branches selected here.
                   </p>
                 </div>
 
