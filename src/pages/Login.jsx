@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { toast } from "@/components/ui/use-toast";
 import AuthLayout from "@/components/AuthLayout";
 import { verifyAgentSetupPhone } from "@/api/authClient";
 import { useAuth } from "@/lib/AuthContext";
@@ -24,18 +25,34 @@ export default function Login() {
   const [newPassword, setNewPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
-  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  const showError = (message) => {
+    toast({
+      variant: "destructive",
+      title: "Action needed",
+      description: message,
+      duration: 5200,
+    });
+  };
+
+  const showSuccess = (message) => {
+    toast({
+      variant: "success",
+      title: "Success",
+      description: message,
+      duration: 4200,
+    });
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError("");
     setLoading(true);
     try {
       await login(email, password);
       navigate("/", { replace: true });
     } catch (err) {
-      setError(err.message || "Invalid email or password");
+      showError(err.message || "Invalid email or password");
     } finally {
       setLoading(false);
     }
@@ -43,7 +60,6 @@ export default function Login() {
 
   const handleAgentSubmit = async (e) => {
     e.preventDefault();
-    setError("");
     setLoading(true);
     try {
       const result = await loginAgent(username, password);
@@ -58,7 +74,7 @@ export default function Login() {
         navigate("/", { replace: true });
       }
     } catch (err) {
-      setError(err.message || "Invalid username or password");
+      showError(err.message || "Invalid username or password");
     } finally {
       setLoading(false);
     }
@@ -66,7 +82,6 @@ export default function Login() {
 
   const handleGetToken = async (e) => {
     e.preventDefault();
-    setError("");
     setLoading(true);
     try {
       await verifyAgentSetupPhone({
@@ -74,9 +89,10 @@ export default function Login() {
         temporaryPassword: password,
         phone,
       });
+      showSuccess("Contact verified. Enter the verification token to continue.");
       setSetupStage("token");
     } catch (err) {
-      setError(err.message || "Phone number does not match the supervisor record.");
+      showError(err.message || "Phone number does not match the supervisor record.");
     } finally {
       setLoading(false);
     }
@@ -84,17 +100,16 @@ export default function Login() {
 
   const handleVerifyToken = (e) => {
     e.preventDefault();
-    setError("");
     if (String(token).trim() !== "1234") {
-      setError("Invalid verification token.");
+      showError("Invalid verification token.");
       return;
     }
+    showSuccess("Token accepted. Set your permanent login details.");
     setSetupStage("reset");
   };
 
   const handleAgentSetup = async (e) => {
     e.preventDefault();
-    setError("");
     setLoading(true);
     try {
       await completeAgentFirstLogin({
@@ -105,9 +120,10 @@ export default function Login() {
         token,
         newPassword,
       });
+      showSuccess("Agent setup completed. Signing you in now.");
       navigate("/", { replace: true });
     } catch (err) {
-      setError(err.message || "Could not complete agent setup");
+      showError(err.message || "Could not complete agent setup");
     } finally {
       setLoading(false);
     }
@@ -116,7 +132,6 @@ export default function Login() {
   const closeSetup = () => {
     setSetupStep(false);
     setSetupStage("phone");
-    setError("");
   };
 
   return (
@@ -131,12 +146,6 @@ export default function Login() {
           {portalSettings?.loginSubtitle || "Sign in with your official email account"}
         </p>
       </div>
-
-      {error && (
-        <div className="mb-2 rounded-lg bg-destructive/10 px-3 py-1.5 text-xs leading-4 text-destructive">
-          {error}
-        </div>
-      )}
 
       {mode === "staff" && (
       <form onSubmit={handleSubmit} className="space-y-3">
@@ -305,12 +314,6 @@ export default function Login() {
               {setupStage === "reset" && "Choose your permanent username and password."}
             </p>
           </div>
-
-          {error && (
-            <div className="mb-3 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {error}
-            </div>
-          )}
 
           {setupStage === "phone" && (
             <form onSubmit={handleGetToken} className="space-y-3">
