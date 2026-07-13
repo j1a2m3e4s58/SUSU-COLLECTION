@@ -63,17 +63,14 @@ export default function AddCustomerDialog({ open, onClose, onSaved, branches }) 
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Branch *</label>
-            <select
+            <ControlledSelect
               value={form.branch_id}
-              onChange={(event) => handleChange('branch_id', event.target.value)}
-              className={`${inputClass} h-12 appearance-auto`}
-              required
-            >
-              <option value="">Select a branch</option>
-              {branchOptions.map((branch) => (
-                <option key={branch} value={branch}>{branch}</option>
-              ))}
-            </select>
+              onChange={(value) => handleChange('branch_id', value)}
+              options={branchOptions}
+              placeholder="Select a branch"
+              className={inputClass}
+              contentClassName="z-[120]"
+            />
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Customer Status</label>

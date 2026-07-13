@@ -74,17 +74,14 @@ export default function EditCustomerDialog({ customer, open, onClose, onSaved, b
             <input className={inputClass} value={form.phone} onChange={(event) => handleChange('phone', event.target.value)} />
           </Field>
           <Field label="Branch *">
-            <select
+            <ControlledSelect
               value={form.branch_name}
-              onChange={(event) => handleChange('branch_name', event.target.value)}
-              className={`${inputClass} h-12 appearance-auto`}
-              required
-            >
-              <option value="">Select a branch</option>
-              {branchOptions.map((branch) => (
-                <option key={branch} value={branch}>{branch}</option>
-              ))}
-            </select>
+              onChange={(value) => handleChange('branch_name', value)}
+              options={branchOptions}
+              placeholder="Select a branch"
+              className={inputClass}
+              contentClassName="z-[120]"
+            />
           </Field>
           <Field label="Status">
             <ControlledSelect value={form.customer_status} onChange={(value) => handleChange('customer_status', value)} options={[{ value: 'active', label: 'Active' }, { value: 'inactive', label: 'Inactive' }, { value: 'suspended', label: 'Suspended' }]} className={inputClass} />
