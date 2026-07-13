@@ -133,7 +133,7 @@ export default function Login() {
       </div>
 
       {error && (
-        <div className="mb-3 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        <div className="mb-2 max-h-12 overflow-y-auto rounded-lg bg-destructive/10 px-3 py-2 text-xs leading-4 text-destructive">
           {error}
         </div>
       )}

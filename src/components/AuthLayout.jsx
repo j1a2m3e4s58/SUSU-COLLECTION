@@ -29,10 +29,10 @@ export default function AuthLayout({ children, className }) {
         <div className="absolute inset-0 bg-gradient-to-br from-primary/15 via-background/10 to-secondary/15" />
       </div>
 
-      <div className="relative flex h-full items-center justify-center overflow-hidden px-4 pb-8 pt-16 sm:px-6 sm:pb-10 sm:pt-20">
+      <div className="relative flex h-full items-center justify-center overflow-hidden px-4 py-14 sm:px-6 sm:py-16">
         <div
           className={cn(
-            "relative w-full max-w-md overflow-visible rounded-3xl border border-primary/20 bg-background/80 px-6 pb-8 pt-24 shadow-glass-dark backdrop-blur-xl dark:border-primary/25 dark:bg-card/85",
+            "relative max-h-[calc(100vh-7rem)] w-full max-w-md overflow-y-auto overflow-x-visible rounded-3xl border border-primary/20 bg-background/80 px-6 pb-6 pt-20 shadow-glass-dark backdrop-blur-xl dark:border-primary/25 dark:bg-card/85 sm:max-h-[calc(100vh-8rem)] sm:pb-8 sm:pt-24",
             className
           )}
         >
