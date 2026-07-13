@@ -77,8 +77,8 @@ export default function Login() {
   };
 
   return (
-    <AuthLayout className="flex min-h-[520px] max-w-[420px] flex-col justify-center px-4 pb-6 pt-20 sm:px-5">
-      <div className="mb-6 space-y-1.5 text-center">
+    <AuthLayout className="flex min-h-0 max-w-[420px] flex-col justify-center px-5 pb-4 pt-16 sm:px-5 sm:pb-5 sm:pt-16">
+      <div className="mb-4 space-y-1 text-center">
         <div className="page-kicker text-center">Secure staff access</div>
         <h1 className="font-display text-2xl font-bold text-foreground">
           {portalSettings?.portalName || "SUSU Workspace"}
@@ -248,11 +248,11 @@ export default function Login() {
         </form>
       )}
 
-      <div className="mt-3 border-t border-border/40 pt-3 text-center">
+      <div className="mt-2 border-t border-border/40 pt-2 text-center">
         <button
           type="button"
           onClick={() => { setMode(mode === "staff" ? "agent" : "staff"); setSetupStep(false); setError(""); }}
-          className="mb-3 w-full rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-sm font-semibold text-primary transition-colors hover:bg-primary/15"
+          className="mb-2 w-full rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-sm font-semibold text-primary transition-colors hover:bg-primary/15"
         >
           {mode === "staff" ? "Agent username login" : "Back to staff email login"}
         </button>
@@ -262,7 +262,7 @@ export default function Login() {
             Sign Up
           </Link>
         </p>
-        <p className="mt-2 text-xs text-muted-foreground">
+        <p className="mt-1 text-xs text-muted-foreground">
           {portalSettings?.authorizedAccessText || "Authorized access only"}
         </p>
       </div>

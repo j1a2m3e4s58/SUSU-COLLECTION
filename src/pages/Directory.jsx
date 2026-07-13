@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/select";
 import {
   archiveStaff,
+  createAgentAccount,
   deleteStaff,
   getActiveStaff,
   getPortalSettings,
@@ -29,7 +30,7 @@ import {
   updateStaff,
 } from "@/api/portalClient";
 import { useAuth } from "@/lib/AuthContext";
-import { Archive, Building2, Mail, MapPin, Phone, Search, ShieldCheck, Trash2, UserPlus, UserX, Users } from "lucide-react";
+import { Archive, Building2, Loader2, Mail, MapPin, Phone, Search, ShieldCheck, Trash2, UserPlus, UserX, Users } from "lucide-react";
 
 function initials(name) {
   return String(name || "User")
@@ -178,6 +179,15 @@ export default function Directory() {
   const [archivingId, setArchivingId] = useState("");
   const [removingId, setRemovingId] = useState("");
   const [confirmAction, setConfirmAction] = useState(null);
+  const [showAddAgent, setShowAddAgent] = useState(false);
+  const [addingAgent, setAddingAgent] = useState(false);
+  const [agentForm, setAgentForm] = useState({
+    fullname: "",
+    username: "",
+    temporaryPassword: "",
+    phone: "",
+    branch: "",
+  });
 
   useEffect(() => {
     let mounted = true;
@@ -282,6 +292,33 @@ export default function Directory() {
     }
   };
 
+  const handleAddAgent = async () => {
+    if (!agentForm.username || !agentForm.temporaryPassword || !agentForm.phone || !agentForm.branch) {
+      setError("Enter username, temporary password, phone, and branch.");
+      return;
+    }
+    setAddingAgent(true);
+    setError("");
+    setSuccess("");
+    try {
+      const created = await createAgentAccount(agentForm);
+      setStaff((current) => [created, ...current.filter((member) => member.id !== created.id)]);
+      setSuccess(`${created.fullname || created.loginUsername || "Agent"} has been added.`);
+      setShowAddAgent(false);
+      setAgentForm({
+        fullname: "",
+        username: "",
+        temporaryPassword: "",
+        phone: "",
+        branch: branches[0] || "",
+      });
+    } catch (err) {
+      setError(err.message || "Could not add this agent.");
+    } finally {
+      setAddingAgent(false);
+    }
+  };
+
   return (
     <div className="space-y-6 pb-20 lg:pb-0">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -313,12 +350,19 @@ export default function Directory() {
                 Supervisor Management
               </Button>
             </Link>
-            <Link to="/register">
-              <Button variant="outline" className="gap-2">
-                <UserPlus className="h-4 w-4" />
-                Add User
-              </Button>
-            </Link>
+            <Button
+              type="button"
+              variant="outline"
+              className="gap-2"
+              onClick={() => {
+                setAgentForm((current) => ({ ...current, branch: current.branch || branches[0] || "" }));
+                setError("");
+                setShowAddAgent(true);
+              }}
+            >
+              <UserPlus className="h-4 w-4" />
+              Add User
+            </Button>
           </div>
         )}
       </div>
@@ -549,6 +593,93 @@ export default function Directory() {
         }}
         onSaved={handleSavedStaff}
       />
+
+      <Dialog open={showAddAgent} onOpenChange={setShowAddAgent}>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-md rounded-xl p-5 sm:p-6">
+          <DialogHeader>
+            <DialogTitle>Add Agent User</DialogTitle>
+            <DialogDescription>
+              Create a username and temporary password for a SUSU agent.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="agent-fullname">Full Name</Label>
+              <Input
+                id="agent-fullname"
+                value={agentForm.fullname}
+                onChange={(event) => setAgentForm({ ...agentForm, fullname: event.target.value })}
+                placeholder="e.g. Gabriel Owusu"
+              />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="agent-username">Username</Label>
+                <Input
+                  id="agent-username"
+                  value={agentForm.username}
+                  onChange={(event) => setAgentForm({ ...agentForm, username: event.target.value })}
+                  placeholder="e.g. gabriel01"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="agent-phone">Phone</Label>
+                <Input
+                  id="agent-phone"
+                  value={agentForm.phone}
+                  onChange={(event) => setAgentForm({ ...agentForm, phone: event.target.value })}
+                  placeholder="024..."
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="agent-temp-password">Temporary Password</Label>
+              <Input
+                id="agent-temp-password"
+                value={agentForm.temporaryPassword}
+                onChange={(event) => setAgentForm({ ...agentForm, temporaryPassword: event.target.value })}
+                placeholder="Temporary password"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="agent-branch">Branch</Label>
+              <Select value={agentForm.branch} onValueChange={(value) => setAgentForm({ ...agentForm, branch: value })}>
+                <SelectTrigger id="agent-branch">
+                  <SelectValue placeholder="Select branch" />
+                </SelectTrigger>
+                <SelectContent>
+                  {branches.map((item) => (
+                    <SelectItem key={item} value={item}>
+                      {item}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="rounded-lg border border-primary/20 bg-primary/10 p-3 text-xs text-muted-foreground">
+              First login will ask for this phone number, token 1234, then a permanent password.
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setShowAddAgent(false)}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={handleAddAgent} disabled={addingAgent}>
+              {addingAgent ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Adding...
+                </>
+              ) : (
+                "Add User"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <ConfirmActionDialog
         open={Boolean(confirmAction)}
         onOpenChange={(open) => {
