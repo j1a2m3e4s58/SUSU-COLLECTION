@@ -18,6 +18,7 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [phone, setPhone] = useState("");
   const [token, setToken] = useState("");
+  const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
@@ -45,6 +46,7 @@ export default function Login() {
     try {
       const result = await loginAgent(username, password);
       if (result?.requiresSetup) {
+        setNewUsername(username);
         setSetupStep(true);
       } else {
         navigate("/", { replace: true });
@@ -64,6 +66,7 @@ export default function Login() {
       await completeAgentFirstLogin({
         username,
         temporaryPassword: password,
+        newUsername,
         phone,
         token,
         newPassword,
@@ -228,7 +231,7 @@ export default function Login() {
       {mode === "agent" && setupStep && (
         <form onSubmit={handleAgentSetup} className="space-y-3">
           <div className="rounded-lg border border-blue-500/20 bg-blue-500/10 p-3 text-xs text-muted-foreground">
-            First login: enter the phone number your supervisor recorded, use token <span className="font-semibold text-foreground">1234</span>, then set your permanent password.
+            First login: enter the phone number your supervisor recorded, use token <span className="font-semibold text-foreground">1234</span>, then set your permanent username and password.
           </div>
           <div className="space-y-1">
             <Label htmlFor="agent-phone" className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Phone Number</Label>
@@ -239,10 +242,14 @@ export default function Login() {
             <Input id="agent-token" value={token} onChange={(e) => setToken(e.target.value)} className="h-9 glass-input text-sm" placeholder="1234" required />
           </div>
           <div className="space-y-1">
+            <Label htmlFor="agent-new-username" className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Permanent Username</Label>
+            <Input id="agent-new-username" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} className="h-9 glass-input text-sm" minLength={3} required />
+          </div>
+          <div className="space-y-1">
             <Label htmlFor="agent-new-password" className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">New Password</Label>
             <Input id="agent-new-password" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="h-9 glass-input text-sm" minLength={8} required />
           </div>
-          <Button type="submit" className="h-10 w-full glass-button text-sm font-bold uppercase tracking-[0.16em]" disabled={loading || !phone || !token || !newPassword}>
+          <Button type="submit" className="h-10 w-full glass-button text-sm font-bold uppercase tracking-[0.16em]" disabled={loading || !phone || !token || !newUsername || !newPassword}>
             {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Setting up...</> : "Complete Setup"}
           </Button>
         </form>

@@ -28,6 +28,7 @@ export default function AgentManagement() {
   const [showImportCustomers, setShowImportCustomers] = useState(false);
   const [resetTarget, setResetTarget] = useState(null);
   const [agentForm, setAgentForm] = useState({ fullname: '', username: '', temporaryPassword: '', phone: '', branch: '' });
+  const [resetUsername, setResetUsername] = useState('');
   const [resetPassword, setResetPassword] = useState('');
   const [importBranch, setImportBranch] = useState('');
   const [importRows, setImportRows] = useState([]);
@@ -233,13 +234,17 @@ export default function AgentManagement() {
   };
 
   const handleResetAgentPassword = async () => {
-    if (!resetTarget || !resetPassword.trim()) return;
+    if (!resetTarget || !resetUsername.trim() || !resetPassword.trim()) {
+      setError('Enter the temporary username and temporary password.');
+      return;
+    }
     setSaving(true);
     setError('');
     try {
-      await resetAgentPassword(resetTarget.id, resetPassword.trim());
-      setSuccess(`Temporary password reset for ${resetTarget.fullname || resetTarget.full_name}.`);
+      await resetAgentPassword(resetTarget.id, resetPassword.trim(), resetUsername.trim());
+      setSuccess(`Temporary login reset for ${resetTarget.fullname || resetTarget.full_name}.`);
       setResetTarget(null);
+      setResetUsername('');
       setResetPassword('');
       await refreshData();
       setTimeout(() => setSuccess(''), 5000);
@@ -386,9 +391,9 @@ export default function AgentManagement() {
                     <td className="py-3 px-3 text-right hidden md:table-cell"><span className="text-foreground font-semibold">GHS {stats.total.toLocaleString()}</span><br /><span className="text-xs text-muted-foreground">{stats.count} total</span></td>
                     <td className="py-3 px-3 text-center">
                       <div className="flex flex-wrap justify-center gap-2">
-                        <button onClick={() => { setResetTarget(a); setResetPassword(''); setError(''); }}
+                        <button onClick={() => { setResetTarget(a); setResetUsername(a.loginUsername || ''); setResetPassword(''); setError(''); }}
                           className="inline-flex items-center gap-1 bg-amber-500/10 text-amber-500 text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-amber-500/20 transition-colors">
-                          <KeyRound className="w-3 h-3" /> Reset
+                          <KeyRound className="w-3 h-3" /> Reset Login
                         </button>
                         <button onClick={() => { setTransferAgent(a); setNewBranch(''); setReason(''); setError(''); }}
                           className="inline-flex items-center gap-1 bg-blue-500/10 text-blue-500 text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-blue-500/20 transition-colors">
@@ -424,9 +429,9 @@ export default function AgentManagement() {
                     <p className="mt-1 text-xs text-muted-foreground">{displayBranch}</p>
                   </div>
                   <div className="flex shrink-0 flex-col gap-2">
-                    <button onClick={() => { setResetTarget(a); setResetPassword(''); setError(''); }}
+                    <button onClick={() => { setResetTarget(a); setResetUsername(a.loginUsername || ''); setResetPassword(''); setError(''); }}
                       className="rounded-lg bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-500">
-                      Reset
+                      Reset Login
                     </button>
                     <button onClick={() => { setTransferAgent(a); setNewBranch(''); setReason(''); setError(''); }}
                       className="rounded-lg bg-blue-500/10 px-3 py-1.5 text-xs font-medium text-blue-500">
@@ -570,17 +575,18 @@ export default function AgentManagement() {
           <div className="relative w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-2xl">
             <div className="mb-4 flex items-center justify-between">
               <div>
-                <h2 className="font-heading text-lg font-bold text-foreground">Reset Agent Password</h2>
+                <h2 className="font-heading text-lg font-bold text-foreground">Reset Agent Login</h2>
                 <p className="text-sm text-muted-foreground">{resetTarget.fullname || resetTarget.full_name}</p>
               </div>
               <button onClick={() => setResetTarget(null)} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
             </div>
             <div className="space-y-3">
+              <input className={inputClass} value={resetUsername} onChange={(e) => setResetUsername(e.target.value)} placeholder="Temporary username" />
               <input className={inputClass} value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} placeholder="New temporary password" />
-              <p className="text-xs text-muted-foreground">The agent will verify phone + token 1234 and set a permanent password on next login.</p>
+              <p className="text-xs text-muted-foreground">The agent logs in with this temporary username/password, verifies phone + token 1234, then sets their permanent username and password.</p>
               <div className="flex gap-3 pt-2">
                 <button onClick={() => setResetTarget(null)} className="flex-1 rounded-lg bg-muted py-2.5 text-sm font-medium text-foreground hover:bg-muted/70">Cancel</button>
-                <button onClick={handleResetAgentPassword} disabled={saving || !resetPassword} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-amber-600 py-2.5 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50">
+                <button onClick={handleResetAgentPassword} disabled={saving || !resetUsername || !resetPassword} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-amber-600 py-2.5 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50">
                   {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
                   Reset
                 </button>

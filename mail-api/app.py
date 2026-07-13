@@ -1712,6 +1712,13 @@ def find_user_by_username(users: list[dict], username: str):
     return next((user for user in users if str(user.get("loginUsername", "")).strip().lower() == normalized), None)
 
 
+def find_user_by_username_safe(users: list[dict], username: object):
+    try:
+        return find_user_by_username(users, normalize_agent_username(username))
+    except ValueError:
+        return None
+
+
 def can_view_operational_record(user: dict, item: dict) -> bool:
     if is_global_manager(user) or user_has_permission(user, "userManagement"):
         return True
@@ -3724,6 +3731,11 @@ def reset_agent_password(user_id: str):
     data, error = require_json()
     if error:
         return error
+    requested_username = str(data.get("temporaryUsername") or "").strip()
+    try:
+        next_username = normalize_agent_username(requested_username) if requested_username else ""
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     temp_password = str(data.get("temporaryPassword") or "").strip()
     if len(temp_password) < 6:
         return jsonify({"error": "Temporary password must be at least 6 characters."}), 400
@@ -3736,14 +3748,27 @@ def reset_agent_password(user_id: str):
     username = str(user.get("loginUsername") or "").strip().lower()
     if not username:
         return jsonify({"error": "This agent does not have a username login."}), 400
+    if next_username and next_username != username:
+        existing = find_user_by_username_safe(users, next_username)
+        if existing and existing.get("id") != user.get("id"):
+            return jsonify({"error": "That username is already assigned to another agent."}), 400
     user["forcePasswordChange"] = True
     user["setupComplete"] = False
+    if next_username:
+        user["loginUsername"] = next_username
     passwords = load_password_store()
-    passwords[agent_password_key(username)] = hash_password_for_storage(temp_password)
+    if next_username and next_username != username:
+        passwords.pop(agent_password_key(username), None)
+    active_username = next_username or username
+    passwords[agent_password_key(active_username)] = hash_password_for_storage(temp_password)
     save_user_store(users)
     save_password_store(passwords)
     revoke_user_sessions(user_id)
-    record_audit_log(auth_user, "RESET_AGENT_PASSWORD", staff_audit_target(user, {"username": username}))
+    record_audit_log(
+        auth_user,
+        "RESET_AGENT_LOGIN",
+        staff_audit_target(user, {"previousUsername": username, "temporaryUsername": active_username}),
+    )
     return jsonify({"ok": True, "user": user})
 
 
@@ -3990,6 +4015,7 @@ def auth_agent_complete_setup():
         return error
     try:
         username = normalize_agent_username(data.get("username"))
+        new_username = normalize_agent_username(data.get("newUsername") or username)
         temp_password = str(data.get("temporaryPassword") or "")
         new_password = str(data.get("newPasswordHash") or "")
         phone = normalize_phone(data.get("phone"))
@@ -4004,16 +4030,26 @@ def auth_agent_complete_setup():
         stored_password = passwords.get(agent_password_key(username))
         if not user or not stored_password or not verify_password(stored_password, temp_password):
             return jsonify({"error": "Invalid username or temporary password."}), 401
+        existing_username = find_user_by_username_safe(users, new_username)
+        if existing_username and existing_username.get("id") != user.get("id"):
+            return jsonify({"error": "That permanent username is already used by another agent."}), 400
         if "".join(ch for ch in str(user.get("phone") or "") if ch.isdigit()) != "".join(ch for ch in phone if ch.isdigit()):
             return jsonify({"error": "Phone number does not match the supervisor record."}), 400
+        if new_username != username:
+            passwords.pop(agent_password_key(username), None)
+            user["loginUsername"] = new_username
         user["forcePasswordChange"] = False
         user["setupComplete"] = True
         user["lastSeen"] = now_ms()
-        passwords[agent_password_key(username)] = hash_password_for_storage(new_password)
+        passwords[agent_password_key(new_username)] = hash_password_for_storage(new_password)
         save_user_store(users)
         save_password_store(passwords)
         session_token = issue_session(user["id"])
-        record_audit_log(user, "AGENT_SETUP_COMPLETED", staff_audit_target(user, {"username": username}))
+        record_audit_log(
+            user,
+            "AGENT_SETUP_COMPLETED",
+            staff_audit_target(user, {"temporaryUsername": username, "permanentUsername": new_username}),
+        )
         return jsonify({"ok": True, "user": user, "sessionToken": session_token})
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400

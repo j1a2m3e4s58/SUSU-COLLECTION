@@ -129,10 +129,10 @@ export async function createAgentAccount(payload) {
   return normalizeUser(data.user);
 }
 
-export async function resetAgentPassword(userId, temporaryPassword) {
+export async function resetAgentPassword(userId, temporaryPassword, temporaryUsername = "") {
   const data = await apiRequest(`/agents/${userId}/reset-password`, {
     method: "POST",
-    body: { temporaryPassword },
+    body: { temporaryPassword, temporaryUsername },
   });
   return normalizeUser(data.user);
 }

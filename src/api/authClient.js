@@ -56,6 +56,7 @@ export async function completeAgentSetup(payload) {
   const data = await request("/auth/agent-complete-setup", {
     username: payload.username,
     temporaryPassword: payload.temporaryPassword,
+    newUsername: payload.newUsername,
     phone: payload.phone,
     token: payload.token,
     newPasswordHash: payload.newPassword,
