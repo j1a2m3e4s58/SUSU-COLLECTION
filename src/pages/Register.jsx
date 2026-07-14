@@ -177,14 +177,10 @@ export default function Register() {
   return (
     <AuthLayout className="flex max-w-[450px] flex-col justify-center px-4 pb-4 pt-14 sm:px-5">
       <div className="mb-1.5 space-y-0.5 text-center">
-        <div className="page-kicker text-center">New staff access</div>
         <h1 className="font-display text-xl font-bold text-foreground">
           Staff Registration
         </h1>
         <p className="text-xs text-muted-foreground">Create your secure account</p>
-        <p className="text-[10px] font-bold uppercase tracking-[0.26em] text-[#006b35]">
-          Leaders in innovation
-        </p>
       </div>
 
       {error && (
@@ -194,7 +190,7 @@ export default function Register() {
       )}
 
       <form onSubmit={handleRegister} className="space-y-1.5">
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="grid grid-cols-2 gap-2">
           <div className="min-w-0 space-y-1">
             <Label htmlFor="fullname" className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
               Full Name
@@ -240,7 +236,7 @@ export default function Register() {
           />
         </div>
 
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="grid grid-cols-2 gap-2">
           <div className="min-w-0 space-y-1">
             <Label className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
               Branch
@@ -267,7 +263,7 @@ export default function Register() {
           </div>
         </div>
 
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="grid grid-cols-2 gap-2">
           <div className="min-w-0 space-y-1">
             <Label htmlFor="reg-password" className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
               Password
@@ -334,7 +330,7 @@ export default function Register() {
           {passwordsMatch ? "Passwords Match" : passwordsMismatch ? "Passwords Do Not Match" : "Password Status"}
         </div>
 
-        <div className="grid gap-x-4 gap-y-0.5 rounded-lg border border-border/70 bg-muted/20 px-2 py-1 text-[9px] font-medium sm:grid-cols-2">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 rounded-lg border border-border/70 bg-muted/20 px-2 py-1 text-[9px] font-medium">
           {passwordRules.map((rule) => {
             const Icon = rule.valid ? CheckCircle2 : XCircle;
             return (
@@ -351,7 +347,7 @@ export default function Register() {
 
         <Button
           type="submit"
-          className="auth-button mt-1 h-9 w-full rounded-xl text-sm font-bold uppercase tracking-wide"
+          className="mt-1 h-9 w-full rounded-xl glass-button text-sm font-bold uppercase tracking-wide"
           disabled={
             loading ||
             !form.email ||
