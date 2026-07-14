@@ -145,6 +145,9 @@ export default function Login() {
         <p className="mx-auto max-w-[17rem] text-xs leading-5 text-muted-foreground">
           {portalSettings?.loginSubtitle || "Sign in with your official email account"}
         </p>
+        <p className="text-[10px] font-bold uppercase tracking-[0.26em] text-[#006b35]">
+          Leaders in innovation
+        </p>
       </div>
 
       {mode === "staff" && (
@@ -219,7 +222,7 @@ export default function Login() {
 
         <Button
           type="submit"
-          className="h-10 w-full glass-button text-sm font-bold uppercase tracking-[0.16em]"
+          className="auth-button h-10 w-full rounded-xl text-sm font-bold uppercase tracking-[0.16em]"
           disabled={loading || !email || !password}
         >
           {loading ? (
@@ -272,7 +275,7 @@ export default function Login() {
               </button>
             </div>
           </div>
-          <Button type="submit" className="h-10 w-full glass-button text-sm font-bold uppercase tracking-[0.16em]" disabled={loading || !username || !password}>
+          <Button type="submit" className="auth-button h-10 w-full rounded-xl text-sm font-bold uppercase tracking-[0.16em]" disabled={loading || !username || !password}>
             {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Signing in...</> : "Agent Login"}
           </Button>
         </form>
@@ -282,7 +285,7 @@ export default function Login() {
         <button
           type="button"
           onClick={() => { setMode(mode === "staff" ? "agent" : "staff"); closeSetup(); }}
-          className="mb-2 w-full rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-sm font-semibold text-primary transition-colors hover:bg-primary/15"
+          className="mb-2 w-full rounded-lg border border-[#006b35]/25 bg-[#006b35]/10 px-3 py-2 text-sm font-semibold text-[#006b35] transition-colors hover:bg-[#006b35]/15"
         >
           {mode === "staff" ? "Agent username login" : "Back to staff email login"}
         </button>
@@ -321,7 +324,7 @@ export default function Login() {
                 <Label htmlFor="agent-phone" className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Contact Number</Label>
                 <Input id="agent-phone" value={phone} onChange={(e) => setPhone(e.target.value)} className="h-10 glass-input text-sm" placeholder="024..." required autoFocus />
               </div>
-              <Button type="submit" className="h-10 w-full glass-button text-sm font-bold uppercase tracking-[0.14em]" disabled={loading || !phone}>
+              <Button type="submit" className="auth-button h-10 w-full rounded-xl text-sm font-bold uppercase tracking-[0.14em]" disabled={loading || !phone}>
                 {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Checking...</> : "Get Verification Token"}
               </Button>
             </form>
@@ -333,7 +336,7 @@ export default function Login() {
                 <Label htmlFor="agent-token" className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Verification Token</Label>
                 <Input id="agent-token" value={token} onChange={(e) => setToken(e.target.value)} className="h-10 glass-input text-sm" placeholder="1234" required autoFocus />
               </div>
-              <Button type="submit" className="h-10 w-full glass-button text-sm font-bold uppercase tracking-[0.14em]" disabled={!token}>
+              <Button type="submit" className="auth-button h-10 w-full rounded-xl text-sm font-bold uppercase tracking-[0.14em]" disabled={!token}>
                 Continue
               </Button>
             </form>
@@ -349,7 +352,7 @@ export default function Login() {
                 <Label htmlFor="agent-new-password" className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Permanent Password</Label>
                 <Input id="agent-new-password" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="h-10 glass-input text-sm" minLength={8} required />
               </div>
-              <Button type="submit" className="h-10 w-full glass-button text-sm font-bold uppercase tracking-[0.14em]" disabled={loading || !newUsername || !newPassword}>
+              <Button type="submit" className="auth-button h-10 w-full rounded-xl text-sm font-bold uppercase tracking-[0.14em]" disabled={loading || !newUsername || !newPassword}>
                 {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</> : "Save And Login"}
               </Button>
             </form>
