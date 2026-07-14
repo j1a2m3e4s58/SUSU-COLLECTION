@@ -9,7 +9,7 @@ import { UserCog, Search, Building2, X, AlertCircle, Loader2, Trash2, FileText, 
 
 export default function AgentManagement() {
   const { user } = useAuth();
-  const { selectedDate, selectedScope } = useWorkDate();
+  const { selectedDate, selectedMonth, selectedScope } = useWorkDate();
   const [staff, setStaff] = useState([]);
   const [branches, setBranches] = useState([]);
   const [collections, setCollections] = useState([]);
@@ -86,13 +86,16 @@ export default function AgentManagement() {
 
   const getAgentStats = (agentName) => {
     const agentCols = collections.filter(c => c.agent_name === agentName);
-    const today = new Date().toISOString().split('T')[0];
-    const todayCols = agentCols.filter(c => c.transaction_date === today);
+    const selectedCols = agentCols.filter((c) => {
+      if (String(c.status || '').toLowerCase() === 'reversed') return false;
+      if (selectedScope === 'month') return String(c.transaction_date || '').startsWith(selectedMonth);
+      return c.transaction_date === selectedDate;
+    });
     return {
       total: agentCols.reduce((s, c) => s + (c.amount || 0), 0),
-      today: todayCols.reduce((s, c) => s + (c.amount || 0), 0),
+      selected: selectedCols.reduce((s, c) => s + (c.amount || 0), 0),
       count: agentCols.length,
-      todayCount: todayCols.length,
+      selectedCount: selectedCols.length,
     };
   };
 
@@ -165,7 +168,7 @@ export default function AgentManagement() {
   };
 
   const exportAgentsPdf = () => {
-    const totalToday = filtered.reduce((sum, agent) => sum + getAgentStats(agent.fullname || agent.full_name).today, 0);
+    const selectedPeriodTotal = filtered.reduce((sum, agent) => sum + getAgentStats(agent.fullname || agent.full_name).selected, 0);
     const totalLifetime = filtered.reduce((sum, agent) => sum + getAgentStats(agent.fullname || agent.full_name).total, 0);
     exportHtmlPdf({
       title: 'Agent Management Report',
@@ -174,10 +177,10 @@ export default function AgentManagement() {
       summary: [
         { label: 'Agents', value: filtered.length },
         { label: 'Branches', value: new Set(filtered.map((agent) => agent.branch || agent.branch_name || 'Unassigned')).size },
-        { label: 'Today Collected', value: `GHS ${totalToday.toLocaleString()}` },
+        { label: selectedScope === 'month' ? 'Month Collected' : 'Day Collected', value: `GHS ${selectedPeriodTotal.toLocaleString()}` },
         { label: 'Lifetime Collected', value: `GHS ${totalLifetime.toLocaleString()}` },
       ],
-      columns: ['Agent Name', 'Code', 'Branch', 'Supervisor', 'Today', 'Total'],
+      columns: ['Agent Name', 'Code', 'Branch', 'Supervisor', selectedScope === 'month' ? 'Selected Month' : 'Selected Day', 'Total'],
       rows: filtered.map((agent) => {
         const displayName = agent.fullname || agent.full_name;
         const stats = getAgentStats(displayName);
@@ -186,7 +189,7 @@ export default function AgentManagement() {
           agent.agent_code || '-',
           agent.branch || agent.branch_name || 'Unassigned',
           agent.supervisor_name || '-',
-          `GHS ${stats.today.toLocaleString()} (${stats.todayCount} txns)`,
+          `GHS ${stats.selected.toLocaleString()} (${stats.selectedCount} txns)`,
           `GHS ${stats.total.toLocaleString()} (${stats.count} total)`,
         ];
       }),
@@ -408,7 +411,7 @@ export default function AgentManagement() {
               <th className="py-3 px-3 font-medium text-muted-foreground text-xs uppercase">Code</th>
               <th className="py-3 px-3 font-medium text-muted-foreground text-xs uppercase hidden md:table-cell">Branch</th>
               <th className="py-3 px-3 font-medium text-muted-foreground text-xs uppercase hidden lg:table-cell">Supervisor</th>
-              <th className="py-3 px-3 font-medium text-muted-foreground text-xs uppercase text-right">Today</th>
+              <th className="py-3 px-3 font-medium text-muted-foreground text-xs uppercase text-right">{selectedScope === 'month' ? 'Month' : 'Day'}</th>
               <th className="py-3 px-3 font-medium text-muted-foreground text-xs uppercase text-right hidden md:table-cell">Total</th>
               <th className="py-3 px-3 font-medium text-muted-foreground text-xs uppercase text-center">Action</th>
             </tr></thead>
@@ -428,7 +431,7 @@ export default function AgentManagement() {
                     <td className="py-3 px-3 text-muted-foreground font-mono text-xs">{a.agent_code || '-'}</td>
                     <td className="py-3 px-3 text-muted-foreground hidden md:table-cell">{displayBranch}</td>
                     <td className="py-3 px-3 text-muted-foreground hidden lg:table-cell">{a.supervisor_name || '-'}</td>
-                    <td className="py-3 px-3 text-right"><span className="text-emerald-500 font-semibold">GHS {stats.today.toLocaleString()}</span><br /><span className="text-xs text-muted-foreground">{stats.todayCount} txns</span></td>
+                    <td className="py-3 px-3 text-right"><span className="text-emerald-500 font-semibold">GHS {stats.selected.toLocaleString()}</span><br /><span className="text-xs text-muted-foreground">{stats.selectedCount} txns</span></td>
                     <td className="py-3 px-3 text-right hidden md:table-cell"><span className="text-foreground font-semibold">GHS {stats.total.toLocaleString()}</span><br /><span className="text-xs text-muted-foreground">{stats.count} total</span></td>
                     <td className="py-3 px-3 text-center">
                       <div className="flex flex-wrap justify-center gap-2">
@@ -490,9 +493,9 @@ export default function AgentManagement() {
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                   <div>
-                    <p className="text-muted-foreground">Today</p>
-                    <p className="font-semibold text-emerald-500">GHS {stats.today.toLocaleString()}</p>
-                    <p className="text-muted-foreground">{stats.todayCount} txns</p>
+                    <p className="text-muted-foreground">{selectedScope === 'month' ? 'Month' : 'Day'}</p>
+                    <p className="font-semibold text-emerald-500">GHS {stats.selected.toLocaleString()}</p>
+                    <p className="text-muted-foreground">{stats.selectedCount} txns</p>
                   </div>
                   <div className="text-right">
                     <p className="text-muted-foreground">Total</p>

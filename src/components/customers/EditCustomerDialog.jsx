@@ -37,6 +37,10 @@ export default function EditCustomerDialog({ customer, open, onClose, onSaved, b
       setError('Please fill in account name, account number, and branch.');
       return;
     }
+    if (!/^\d{13}$/.test(form.account_number.trim())) {
+      setError('Account number must be exactly 13 digits.');
+      return;
+    }
     setSaving(true);
     setError('');
     try {
@@ -55,7 +59,7 @@ export default function EditCustomerDialog({ customer, open, onClose, onSaved, b
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-2xl">
+      <div className="relative max-h-[calc(100vh-2rem)] w-full max-w-md overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-2xl sm:p-6">
         <div className="mb-5 flex items-center justify-between">
           <h2 className="font-heading text-lg font-bold text-foreground">Edit Customer</h2>
           <button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground">
@@ -68,7 +72,7 @@ export default function EditCustomerDialog({ customer, open, onClose, onSaved, b
             <input className={inputClass} value={form.account_name} onChange={(event) => handleChange('account_name', event.target.value)} />
           </Field>
           <Field label="Account Number *">
-            <input className={inputClass} value={form.account_number} onChange={(event) => handleChange('account_number', event.target.value)} />
+            <input className={inputClass} value={form.account_number} onChange={(event) => handleChange('account_number', event.target.value.replace(/\D/g, '').slice(0, 13))} inputMode="numeric" maxLength={13} />
           </Field>
           <Field label="Phone">
             <input className={inputClass} value={form.phone} onChange={(event) => handleChange('phone', event.target.value)} />

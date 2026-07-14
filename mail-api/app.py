@@ -71,8 +71,6 @@ DEFAULT_PORTAL_SETTINGS = {
     "departments": DEFAULT_PORTAL_DEPARTMENTS,
     "formCategories": [],
     "trainingCategories": [],
-    "supportIssueCategories": [],
-    "supportRequestTypes": [],
     "departmentChangeTypes": [],
     "transferLocations": [],
     "loginSubtitle": "Sign in to manage SUSU collections, customers, staff, and branch reports.",
@@ -90,7 +88,6 @@ DEFAULT_PORTAL_SETTINGS = {
     "dashboardLabel": "Dashboard",
     "trainingLabel": "",
     "formsLabel": "",
-    "supportLabel": "",
     "profileLabel": "Profile",
     "activeStaffLabel": "Active Staff",
     "branchCoverageLabel": "Branch Coverage",
@@ -1195,8 +1192,6 @@ def load_portal_settings_store() -> dict:
         "departments": DEFAULT_PORTAL_DEPARTMENTS,
         "formCategories": [],
         "trainingCategories": [],
-        "supportIssueCategories": [],
-        "supportRequestTypes": [],
         "departmentChangeTypes": [],
         "transferLocations": [],
         "loginSubtitle": str(raw.get("loginSubtitle") or DEFAULT_PORTAL_SETTINGS["loginSubtitle"]),
@@ -1213,7 +1208,6 @@ def load_portal_settings_store() -> dict:
         "dashboardLabel": str(raw.get("dashboardLabel") or DEFAULT_PORTAL_SETTINGS["dashboardLabel"]),
         "trainingLabel": str(raw.get("trainingLabel") or DEFAULT_PORTAL_SETTINGS["trainingLabel"]),
         "formsLabel": str(raw.get("formsLabel") or DEFAULT_PORTAL_SETTINGS["formsLabel"]),
-        "supportLabel": str(raw.get("supportLabel") or DEFAULT_PORTAL_SETTINGS["supportLabel"]),
         "appMode": "live" if str(raw.get("appMode", DEFAULT_PORTAL_SETTINGS["appMode"])).strip().lower() == "live" else "test",
         "profileLabel": str(raw.get("profileLabel") or DEFAULT_PORTAL_SETTINGS["profileLabel"]),
         "activeStaffLabel": str(raw.get("activeStaffLabel") or DEFAULT_PORTAL_SETTINGS["activeStaffLabel"]),
@@ -2660,8 +2654,6 @@ def update_portal_settings():
         "departments": DEFAULT_PORTAL_DEPARTMENTS,
         "formCategories": [],
         "trainingCategories": [],
-        "supportIssueCategories": [],
-        "supportRequestTypes": [],
         "departmentChangeTypes": [],
         "transferLocations": [],
         "loginSubtitle": str(data.get("loginSubtitle") or DEFAULT_PORTAL_SETTINGS["loginSubtitle"]),
@@ -2678,7 +2670,6 @@ def update_portal_settings():
         "dashboardLabel": str(data.get("dashboardLabel") or DEFAULT_PORTAL_SETTINGS["dashboardLabel"]),
         "trainingLabel": str(data.get("trainingLabel") or DEFAULT_PORTAL_SETTINGS["trainingLabel"]),
         "formsLabel": str(data.get("formsLabel") or DEFAULT_PORTAL_SETTINGS["formsLabel"]),
-        "supportLabel": str(data.get("supportLabel") or DEFAULT_PORTAL_SETTINGS["supportLabel"]),
         "appMode": "live" if str(data.get("appMode", "test")).strip().lower() == "live" else "test",
         "profileLabel": str(data.get("profileLabel") or DEFAULT_PORTAL_SETTINGS["profileLabel"]),
         "activeStaffLabel": str(data.get("activeStaffLabel") or DEFAULT_PORTAL_SETTINGS["activeStaffLabel"]),
@@ -3314,6 +3305,13 @@ def create_collection():
     transaction_reference = str(data.get("transaction_reference") or f"TXN-{now_ms()}").strip()
     if any(str(item.get("transaction_reference", "")).strip() == transaction_reference for item in collections):
         return jsonify({"error": "This transaction reference has already been recorded"}), 400
+    if any(
+        str(item.get("customer_id", "")).strip() == customer_id
+        and str(item.get("transaction_date", "")).strip() == (transaction_date or today)
+        and str(item.get("status", "completed")).strip().lower() == "completed"
+        for item in collections
+    ):
+        return jsonify({"error": "This customer already has a completed deposit for the selected day."}), 400
     collection = {
         "id": f"col-{now_ms()}-{secrets.token_hex(3)}",
         "customer_id": customer_id,

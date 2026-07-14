@@ -46,7 +46,7 @@ export default function AddCustomerDialog({ open, onClose, onSaved, branches }) 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-2xl sm:p-6">
+      <div className="relative max-h-[calc(100vh-2rem)] w-full max-w-md overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-2xl sm:p-6">
         <div className="flex items-center justify-between mb-5">
           <h2 className="font-heading text-lg font-bold text-foreground">Add New Customer</h2>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>

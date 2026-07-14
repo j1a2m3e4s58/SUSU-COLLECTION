@@ -217,8 +217,6 @@ export default function PortalControl() {
       departments: ["SUSU", "SUSU AGENT"],
       formCategories: [],
       trainingCategories: [],
-      supportIssueCategories: [],
-      supportRequestTypes: [],
       departmentChangeTypes: [],
       transferLocations: [],
       appMode: draft.appMode === "live" ? "live" : "test",

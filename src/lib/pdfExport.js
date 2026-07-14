@@ -8,7 +8,13 @@ const escapeHtml = (value) => String(value ?? '')
 export function exportHtmlPdf({ title, subtitle, summary = [], columns, rows, filename = 'susu-report' }) {
   const printWindow = window.open('', '_blank', 'width=1100,height=800');
   if (!printWindow) {
-    window.alert('Please allow popups for this site so the PDF print window can open.');
+    window.dispatchEvent(new CustomEvent('portal-toast', {
+      detail: {
+        variant: 'warning',
+        title: 'PDF window blocked',
+        description: 'Please allow popups for this site so the PDF print window can open.',
+      },
+    }));
     return;
   }
 
