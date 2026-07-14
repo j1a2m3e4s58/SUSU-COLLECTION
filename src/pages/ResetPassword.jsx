@@ -40,7 +40,7 @@ export default function ResetPassword() {
 
   if (!resetToken) {
     return (
-      <AuthLayout className="max-w-[450px] px-5 pb-8 pt-20">
+      <AuthLayout className="px-6 pb-7 pt-16 sm:px-7 lg:max-w-[440px]">
         <div className="flex flex-col items-center gap-4 py-4 text-center">
           <AlertTriangle className="h-10 w-10 text-destructive" />
           <div>
@@ -62,7 +62,7 @@ export default function ResetPassword() {
 
   if (done) {
     return (
-      <AuthLayout className="max-w-[450px] px-5 pb-8 pt-20">
+      <AuthLayout className="px-6 pb-7 pt-16 sm:px-7 lg:max-w-[440px]">
         <div className="flex flex-col items-center gap-4 py-4 text-center">
           <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#006b35]/10">
             <CheckCircle2 className="h-7 w-7 text-[#006b35]" />
@@ -85,7 +85,7 @@ export default function ResetPassword() {
   }
 
   return (
-    <AuthLayout className="max-w-[450px] px-5 pb-8 pt-20">
+    <AuthLayout className="px-6 pb-7 pt-16 sm:px-7 lg:max-w-[440px]">
       <div className="mb-8 space-y-3 text-center">
         <div className="page-kicker text-center">Secure credentials</div>
         <h1 className="font-display text-3xl font-bold text-foreground">
@@ -93,9 +93,6 @@ export default function ResetPassword() {
         </h1>
         <p className="mx-auto max-w-sm text-sm leading-6 text-muted-foreground">
           Choose a strong password for your account
-        </p>
-        <p className="text-[10px] font-bold uppercase tracking-[0.26em] text-[#006b35]">
-          Leaders in innovation
         </p>
       </div>
 
@@ -164,7 +161,7 @@ export default function ResetPassword() {
 
         <Button
           type="submit"
-          className="auth-button h-12 w-full rounded-xl text-sm font-bold uppercase tracking-[0.16em]"
+          className="glass-button h-12 w-full rounded-xl text-sm font-bold uppercase tracking-[0.16em]"
           disabled={loading || !newPassword || !confirmPassword || newPassword !== confirmPassword}
         >
           {loading ? (
