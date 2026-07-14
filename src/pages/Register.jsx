@@ -8,17 +8,10 @@ import AuthLayout from "@/components/AuthLayout";
 import { registerWithEmail, resendVerification, verifyEmail } from "@/api/authClient";
 import { getPortalSettings } from "@/api/portalClient";
 import {
-  ArrowLeft,
-  Building2,
-  BriefcaseBusiness,
   CheckCircle2,
   Eye,
   EyeOff,
   Loader2,
-  Lock,
-  Mail,
-  Phone,
-  User,
   XCircle,
 } from "lucide-react";
 
@@ -124,7 +117,7 @@ export default function Register() {
 
   if (step === "verify") {
     return (
-      <AuthLayout className="px-6 pb-7 pt-16 sm:px-7 lg:max-w-[440px]">
+      <AuthLayout>
         <div className="mb-6 space-y-1 text-center">
           <h1 className="font-display text-2xl font-bold text-foreground">
             Verify Your Email
@@ -182,13 +175,16 @@ export default function Register() {
   }
 
   return (
-    <AuthLayout className="flex flex-col justify-center px-5 pb-4 pt-[3.25rem] sm:px-6 lg:max-w-[440px]">
-      <div className="mb-4 space-y-0.5 text-center">
+    <AuthLayout className="flex max-w-[450px] flex-col justify-center px-4 pb-4 pt-14 sm:px-5">
+      <div className="mb-1.5 space-y-0.5 text-center">
         <div className="page-kicker text-center">New staff access</div>
-        <h1 className="font-display text-2xl font-bold text-foreground">
+        <h1 className="font-display text-xl font-bold text-foreground">
           Staff Registration
         </h1>
         <p className="text-xs text-muted-foreground">Create your secure account</p>
+        <p className="text-[10px] font-bold uppercase tracking-[0.26em] text-[#006b35]">
+          Leaders in innovation
+        </p>
       </div>
 
       {error && (
@@ -197,40 +193,34 @@ export default function Register() {
         </div>
       )}
 
-      <form onSubmit={handleRegister} className="space-y-2">
+      <form onSubmit={handleRegister} className="space-y-1.5">
         <div className="grid gap-2 sm:grid-cols-2">
           <div className="min-w-0 space-y-1">
             <Label htmlFor="fullname" className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
               Full Name
             </Label>
-            <div className="relative">
-              <User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                id="fullname"
-                placeholder="John Mensah"
-                value={form.fullname}
-                onChange={(e) => update("fullname", e.target.value)}
-                className="h-10 rounded-lg glass-input pl-10 text-sm"
-                required
-              />
-            </div>
+            <Input
+              id="fullname"
+              placeholder="John Mensah"
+              value={form.fullname}
+              onChange={(e) => update("fullname", e.target.value)}
+              className="h-8 rounded-lg glass-input text-sm"
+              required
+            />
           </div>
           <div className="min-w-0 space-y-1">
             <Label htmlFor="phone" className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
               Phone Number
             </Label>
-            <div className="relative">
-              <Phone className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                id="phone"
-                type="tel"
-                placeholder="024 XXX XXXX"
-                value={form.phone}
-                onChange={(e) => update("phone", e.target.value)}
-                className="h-10 rounded-lg glass-input pl-10 text-sm"
-                required
-              />
-            </div>
+            <Input
+              id="phone"
+              type="tel"
+              placeholder="024 XXX XXXX"
+              value={form.phone}
+              onChange={(e) => update("phone", e.target.value)}
+              className="h-8 rounded-lg glass-input text-sm"
+              required
+            />
           </div>
         </div>
 
@@ -238,19 +228,16 @@ export default function Register() {
           <Label htmlFor="reg-email" className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
             Official Email
           </Label>
-          <div className="relative">
-            <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              id="reg-email"
-              type="email"
-              placeholder="you@bawjiasecommunitybank.com"
-              value={form.email}
-              onChange={(e) => update("email", e.target.value)}
-              className="h-10 rounded-lg glass-input pl-10 text-sm"
-              autoComplete="email"
-              required
-            />
-          </div>
+          <Input
+            id="reg-email"
+            type="email"
+            placeholder="you@bawjiasecommunitybank.com"
+            value={form.email}
+            onChange={(e) => update("email", e.target.value)}
+            className="h-8 rounded-lg glass-input text-sm"
+            autoComplete="email"
+            required
+          />
         </div>
 
         <div className="grid gap-2 sm:grid-cols-2">
@@ -258,31 +245,25 @@ export default function Register() {
             <Label className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
               Branch
             </Label>
-            <div className="relative">
-              <Building2 className="pointer-events-none absolute left-3 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <ControlledSelect
-                value={form.branch}
-                onChange={(value) => update("branch", value)}
-                options={branches}
-                placeholder="Select Branch"
-                className="h-10 rounded-lg border-primary/15 bg-background/70 pl-10 text-sm shadow-sm backdrop-blur-sm dark:border-primary/20 dark:bg-card/70"
-              />
-            </div>
+            <ControlledSelect
+              value={form.branch}
+              onChange={(value) => update("branch", value)}
+              options={branches}
+              placeholder="Select..."
+              className="h-8 rounded-lg border-primary/15 bg-background/70 text-sm shadow-sm backdrop-blur-sm dark:border-primary/20 dark:bg-card/70"
+            />
           </div>
           <div className="min-w-0 space-y-1">
             <Label className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
               SUSU Category
             </Label>
-            <div className="relative">
-              <BriefcaseBusiness className="pointer-events-none absolute left-3 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <ControlledSelect
-                value={form.department}
-                onChange={(value) => update("department", value)}
-                options={departments}
-                placeholder="Select Category"
-                className="h-10 rounded-lg border-primary/15 bg-background/70 pl-10 text-sm shadow-sm backdrop-blur-sm dark:border-primary/20 dark:bg-card/70"
-              />
-            </div>
+            <ControlledSelect
+              value={form.department}
+              onChange={(value) => update("department", value)}
+              options={departments}
+              placeholder="Select..."
+              className="h-8 rounded-lg border-primary/15 bg-background/70 text-sm shadow-sm backdrop-blur-sm dark:border-primary/20 dark:bg-card/70"
+            />
           </div>
         </div>
 
@@ -292,14 +273,13 @@ export default function Register() {
               Password
             </Label>
             <div className="relative">
-              <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 id="reg-password"
                 type={showPassword ? "text" : "password"}
                 placeholder="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="h-10 rounded-lg glass-input pl-10 pr-10 text-sm"
+                className="h-8 rounded-lg glass-input pr-10 text-sm"
                 autoComplete="new-password"
                 minLength={8}
                 required
@@ -319,14 +299,13 @@ export default function Register() {
               Confirm
             </Label>
             <div className="relative">
-              <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 id="confirm-password"
                 type={showPassword ? "text" : "password"}
                 placeholder="Repeat Pass"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
-                className="h-10 rounded-lg glass-input pl-10 pr-10 text-sm"
+                className="h-8 rounded-lg glass-input pr-10 text-sm"
                 autoComplete="new-password"
                 minLength={8}
                 required
@@ -372,7 +351,7 @@ export default function Register() {
 
         <Button
           type="submit"
-          className="glass-button mt-1 h-10 w-full rounded-xl text-sm font-bold uppercase tracking-wide"
+          className="auth-button mt-1 h-9 w-full rounded-xl text-sm font-bold uppercase tracking-wide"
           disabled={
             loading ||
             !form.email ||
@@ -398,7 +377,7 @@ export default function Register() {
 
       <div className="mt-2 text-center text-sm text-muted-foreground">
         <Link to="/login" className="font-medium transition-smooth hover:text-primary">
-          <span className="inline-flex items-center gap-1.5"><ArrowLeft className="h-3.5 w-3.5" /> Back to Login</span>
+          Back to Login
         </Link>
       </div>
     </AuthLayout>

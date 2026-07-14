@@ -8,7 +8,7 @@ import { toast } from "@/components/ui/use-toast";
 import AuthLayout from "@/components/AuthLayout";
 import { verifyAgentSetupPhone } from "@/api/authClient";
 import { useAuth } from "@/lib/AuthContext";
-import { Eye, EyeOff, Loader2, Lock, Mail, ShieldCheck, User } from "lucide-react";
+import { Eye, EyeOff, Loader2 } from "lucide-react";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -136,14 +136,17 @@ export default function Login() {
 
   return (
     <>
-    <AuthLayout className="flex flex-col justify-center px-5 pb-4 pt-[3.25rem] sm:px-6 lg:max-w-[395px]">
-      <div className="mb-5 space-y-1 text-center">
+    <AuthLayout className="flex min-h-0 max-w-[420px] flex-col justify-center px-5 pb-5 pt-16 sm:px-5 sm:pb-6 sm:pt-16">
+      <div className="mb-4 space-y-1 text-center">
         <div className="page-kicker text-center">Secure staff access</div>
         <h1 className="font-display text-2xl font-bold text-foreground">
           {portalSettings?.portalName || "SUSU Workspace"}
         </h1>
         <p className="mx-auto max-w-[17rem] text-xs leading-5 text-muted-foreground">
           {portalSettings?.loginSubtitle || "Sign in with your official email account"}
+        </p>
+        <p className="text-[10px] font-bold uppercase tracking-[0.26em] text-[#006b35]">
+          Leaders in innovation
         </p>
       </div>
 
@@ -156,20 +159,17 @@ export default function Login() {
           >
             Official Email
           </Label>
-          <div className="relative">
-            <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              id="email"
-              type="email"
-              placeholder="you@bawjiasecommunitybank.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="h-10 glass-input pl-10 text-sm"
-              autoComplete="email"
-              autoFocus
-              required
-            />
-          </div>
+          <Input
+            id="email"
+            type="email"
+            placeholder="you@bawjiasecommunitybank.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="h-9 glass-input text-sm"
+            autoComplete="email"
+            autoFocus
+            required
+          />
         </div>
 
         <div className="space-y-1">
@@ -180,14 +180,13 @@ export default function Login() {
             Password
           </Label>
           <div className="relative">
-            <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               id="password"
               type={showPassword ? "text" : "password"}
               placeholder="Password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="h-10 glass-input pl-10 pr-10 text-sm"
+              className="h-9 glass-input pr-10 text-sm"
               autoComplete="current-password"
               required
             />
@@ -217,13 +216,13 @@ export default function Login() {
             to="/forgot-password"
             className="shrink-0 text-muted-foreground transition-smooth hover:text-primary"
           >
-            Forgot password?
+            Forgot?
           </Link>
         </div>
 
         <Button
           type="submit"
-          className="glass-button h-10 w-full rounded-xl text-sm font-bold uppercase tracking-[0.16em]"
+          className="auth-button h-10 w-full rounded-xl text-sm font-bold uppercase tracking-[0.16em]"
           disabled={loading || !email || !password}
         >
           {loading ? (
@@ -232,7 +231,7 @@ export default function Login() {
               Signing in...
             </>
           ) : (
-            portalSettings?.loginButtonText || "Secure Login"
+            portalSettings?.loginButtonText || "Sign In"
           )}
         </Button>
       </form>
@@ -244,34 +243,30 @@ export default function Login() {
             <Label htmlFor="agent-username" className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
               Agent Username
             </Label>
-            <div className="relative">
-              <User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                id="agent-username"
-                type="text"
-                placeholder="e.g. gabriel01"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                className="h-10 glass-input pl-10 text-sm"
-                autoComplete="username"
-                autoFocus
-                required
-              />
-            </div>
+            <Input
+              id="agent-username"
+              type="text"
+              placeholder="e.g. gabriel01"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className="h-9 glass-input text-sm"
+              autoComplete="username"
+              autoFocus
+              required
+            />
           </div>
           <div className="space-y-1">
             <Label htmlFor="agent-password" className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
               Temporary / Agent Password
             </Label>
             <div className="relative">
-              <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 id="agent-password"
                 type={showPassword ? "text" : "password"}
                 placeholder="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="h-10 glass-input pl-10 pr-10 text-sm"
+                className="h-9 glass-input pr-10 text-sm"
                 autoComplete="current-password"
                 required
               />
@@ -280,21 +275,17 @@ export default function Login() {
               </button>
             </div>
           </div>
-          <Button type="submit" className="glass-button h-10 w-full rounded-xl text-sm font-bold uppercase tracking-[0.16em]" disabled={loading || !username || !password}>
+          <Button type="submit" className="auth-button h-10 w-full rounded-xl text-sm font-bold uppercase tracking-[0.16em]" disabled={loading || !username || !password}>
             {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Signing in...</> : "Agent Login"}
           </Button>
         </form>
       )}
 
       <div className="mt-2 border-t border-border/40 pt-2 text-center">
-        <div className="mb-2 flex items-start gap-3 rounded-xl border border-primary/10 bg-primary/5 px-3 py-3 text-left text-xs leading-5 text-muted-foreground">
-          <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
-          <span>This is a confidential system. Unauthorized access is strictly prohibited and all activities are monitored and audited.</span>
-        </div>
         <button
           type="button"
           onClick={() => { setMode(mode === "staff" ? "agent" : "staff"); closeSetup(); }}
-          className="mb-2 w-full rounded-lg border border-primary/20 bg-primary/10 px-3 py-2 text-sm font-semibold text-primary transition-colors hover:bg-primary/15"
+          className="mb-2 w-full rounded-lg border border-[#006b35]/25 bg-[#006b35]/10 px-3 py-2 text-sm font-semibold text-[#006b35] transition-colors hover:bg-[#006b35]/15"
         >
           {mode === "staff" ? "Agent username login" : "Back to staff email login"}
         </button>
@@ -333,7 +324,7 @@ export default function Login() {
                 <Label htmlFor="agent-phone" className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Contact Number</Label>
                 <Input id="agent-phone" value={phone} onChange={(e) => setPhone(e.target.value)} className="h-10 glass-input text-sm" placeholder="024..." required autoFocus />
               </div>
-              <Button type="submit" className="glass-button h-10 w-full rounded-xl text-sm font-bold uppercase tracking-[0.14em]" disabled={loading || !phone}>
+              <Button type="submit" className="auth-button h-10 w-full rounded-xl text-sm font-bold uppercase tracking-[0.14em]" disabled={loading || !phone}>
                 {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Checking...</> : "Get Verification Token"}
               </Button>
             </form>
@@ -345,7 +336,7 @@ export default function Login() {
                 <Label htmlFor="agent-token" className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Verification Token</Label>
                 <Input id="agent-token" value={token} onChange={(e) => setToken(e.target.value)} className="h-10 glass-input text-sm" placeholder="1234" required autoFocus />
               </div>
-              <Button type="submit" className="glass-button h-10 w-full rounded-xl text-sm font-bold uppercase tracking-[0.14em]" disabled={!token}>
+              <Button type="submit" className="auth-button h-10 w-full rounded-xl text-sm font-bold uppercase tracking-[0.14em]" disabled={!token}>
                 Continue
               </Button>
             </form>
@@ -361,7 +352,7 @@ export default function Login() {
                 <Label htmlFor="agent-new-password" className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Permanent Password</Label>
                 <Input id="agent-new-password" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="h-10 glass-input text-sm" minLength={8} required />
               </div>
-              <Button type="submit" className="glass-button h-10 w-full rounded-xl text-sm font-bold uppercase tracking-[0.14em]" disabled={loading || !newUsername || !newPassword}>
+              <Button type="submit" className="auth-button h-10 w-full rounded-xl text-sm font-bold uppercase tracking-[0.14em]" disabled={loading || !newUsername || !newPassword}>
                 {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</> : "Save And Login"}
               </Button>
             </form>
