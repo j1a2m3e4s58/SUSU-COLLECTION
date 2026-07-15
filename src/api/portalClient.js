@@ -91,6 +91,13 @@ export async function updatePortalSettings(settings, password = getStoredPortalC
   return data.settings;
 }
 
+export async function unlockPortalControl(password) {
+  return apiRequest("/portal-settings/unlock", {
+    method: "POST",
+    body: { password },
+  });
+}
+
 export async function getActiveStaff() {
   const data = await apiRequest("/staff/active");
   return (data.users || []).map(normalizeUser);
@@ -182,6 +189,11 @@ export async function importCustomers(payload) {
     method: "POST",
     body: payload,
   });
+}
+
+export async function getCustomerImports() {
+  const data = await apiRequest("/customers/imports");
+  return data.imports || [];
 }
 
 export async function updateCustomer(customerId, payload) {

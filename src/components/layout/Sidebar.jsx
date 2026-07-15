@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { setStoredPortalControlPassword } from '@/api/portalClient';
+import { setStoredPortalControlPassword, unlockPortalControl } from '@/api/portalClient';
 
 export const navItems = [
   { label: 'Dashboard', path: '/', icon: LayoutDashboard },
@@ -38,6 +38,7 @@ export default function Sidebar({ isOpen, onClose, user, settings }) {
   const [unlockOpen, setUnlockOpen] = useState(false);
   const [password, setPassword] = useState("");
   const [unlockError, setUnlockError] = useState("");
+  const [unlocking, setUnlocking] = useState(false);
 
   const canManagePortal = user?.role === 'OwnerAdmin';
   const canOwnerControl = user?.role === 'OwnerAdmin';
@@ -61,15 +62,20 @@ export default function Sidebar({ isOpen, onClose, user, settings }) {
     setUnlockOpen(true);
   };
 
-  const handleUnlock = () => {
-    if (password.trim().toUpperCase() !== 'T4N4AMEG8F52468') {
-      setUnlockError('Portal control password is incorrect.');
-      return;
+  const handleUnlock = async () => {
+    setUnlocking(true);
+    setUnlockError("");
+    try {
+      await unlockPortalControl(password.trim());
+      setStoredPortalControlPassword(password.trim());
+      setUnlockOpen(false);
+      onClose?.();
+      navigate('/portal-control');
+    } catch (err) {
+      setUnlockError(err.message || 'Portal control password is incorrect.');
+    } finally {
+      setUnlocking(false);
     }
-    setStoredPortalControlPassword(password.trim());
-    setUnlockOpen(false);
-    onClose?.();
-    navigate('/portal-control');
   };
 
   return (
@@ -146,8 +152,8 @@ export default function Sidebar({ isOpen, onClose, user, settings }) {
             <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={() => setUnlockOpen(false)}>
               Cancel
             </Button>
-            <Button type="button" className="w-full sm:w-auto" onClick={handleUnlock}>
-              Unlock
+            <Button type="button" className="w-full sm:w-auto" onClick={handleUnlock} disabled={unlocking || !password.trim()}>
+              {unlocking ? "Unlocking..." : "Unlock"}
             </Button>
           </DialogFooter>
         </DialogContent>

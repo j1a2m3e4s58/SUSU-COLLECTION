@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { createAgentAccount, createAuditLog, deleteStaff, exportBackup, getActiveStaff, getCollections, getPortalSettings, importCustomers, reopenDailyCollections, resetAgentPassword, updateStaff } from '@/api/portalClient';
+import { createAgentAccount, createAuditLog, deleteStaff, exportBackup, getActiveStaff, getCollections, getCustomerImports, getPortalSettings, importCustomers, reopenDailyCollections, resetAgentPassword, updateStaff } from '@/api/portalClient';
 import ControlledSelect from '@/components/ui/controlled-select';
 import { useAuth } from '@/lib/AuthContext';
 import { useWorkDate } from '@/lib/WorkDateContext';
@@ -38,6 +38,7 @@ export default function AgentManagement() {
   const [importInvalidRows, setImportInvalidRows] = useState([]);
   const [importFileName, setImportFileName] = useState('');
   const [importSummary, setImportSummary] = useState(null);
+  const [importHistory, setImportHistory] = useState([]);
 
   const isOwner = user?.role === 'OwnerAdmin';
   const supervisorBranches = Array.isArray(user?.managedBranches) && user.managedBranches.length
@@ -48,10 +49,11 @@ export default function AgentManagement() {
   const refreshData = async () => {
     setLoading(true);
     try {
-      const [s, b, c] = await Promise.all([
+      const [s, b, c, imports] = await Promise.all([
       getActiveStaff(),
       getPortalSettings(),
       getCollections(),
+      getCustomerImports().catch(() => []),
       ]);
       const nextBranches = b?.branches || [];
       setBranches(nextBranches);
@@ -65,6 +67,7 @@ export default function AgentManagement() {
         (isOwner || supervisorBranches.includes(x.branch || x.branch_name))
       ));
       setCollections(c || []);
+      setImportHistory(imports || []);
     } finally {
       setLoading(false);
     }
@@ -509,6 +512,40 @@ export default function AgentManagement() {
         </div>
       </div>
 
+      <section className="rounded-xl border border-border bg-card p-4">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="font-heading text-base font-bold text-foreground">Recent Customer Imports</h2>
+            <p className="text-xs text-muted-foreground">Shows uploaded customer batches for the branches you manage.</p>
+          </div>
+          <button onClick={refreshData} className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted">
+            Refresh
+          </button>
+        </div>
+        {importHistory.length === 0 ? (
+          <div className="rounded-lg border border-border bg-background/40 p-4 text-sm text-muted-foreground">
+            No customer import batches recorded yet.
+          </div>
+        ) : (
+          <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+            {importHistory.slice(0, 6).map((item) => (
+              <article key={item.id} className="rounded-lg border border-border bg-background/40 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-foreground">{item.branch || 'Branch'}</p>
+                    <p className="text-xs text-muted-foreground">{item.uploadedAt ? new Date(item.uploadedAt).toLocaleString() : '-'}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">By {item.uploadedBy || 'Unknown'}</p>
+                  </div>
+                  <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-500">
+                    {item.createdCount || 0} added
+                  </span>
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">{item.skippedCount || 0} skipped row(s)</p>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
       {confirmDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
           <div className="absolute inset-0 bg-black/65 backdrop-blur-sm" onClick={() => setConfirmDelete(false)} />
@@ -564,7 +601,7 @@ export default function AgentManagement() {
               <input className={inputClass} value={agentForm.temporaryPassword} onChange={(e) => setAgentForm({ ...agentForm, temporaryPassword: e.target.value })} placeholder="Temporary password" />
               <ControlledSelect value={agentForm.branch} onChange={(branch) => setAgentForm({ ...agentForm, branch })} options={scopedBranches} placeholder="Select branch" className={inputClass} />
               <div className="rounded-lg border border-blue-500/20 bg-blue-500/10 p-3 text-xs text-muted-foreground">
-                First login will ask the agent for this phone number, token 1234, then their permanent password.
+                First login will ask the agent for this phone number, then generate a one-time setup token before their permanent password.
               </div>
               <div className="flex gap-3 pt-2">
                 <button onClick={() => setShowCreateAgent(false)} className="flex-1 rounded-lg bg-muted py-2.5 text-sm font-medium text-foreground hover:bg-muted/70">Cancel</button>
@@ -650,7 +687,7 @@ export default function AgentManagement() {
             <div className="space-y-3">
               <input className={inputClass} value={resetUsername} onChange={(e) => setResetUsername(e.target.value)} placeholder="Temporary username" />
               <input className={inputClass} value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} placeholder="New temporary password" />
-              <p className="text-xs text-muted-foreground">The agent logs in with this temporary username/password, verifies phone + token 1234, then sets their permanent username and password.</p>
+              <p className="text-xs text-muted-foreground">The agent logs in with this temporary username/password, verifies phone, enters the generated setup token, then sets their permanent username and password.</p>
               <div className="flex gap-3 pt-2">
                 <button onClick={() => setResetTarget(null)} className="flex-1 rounded-lg bg-muted py-2.5 text-sm font-medium text-foreground hover:bg-muted/70">Cancel</button>
                 <button onClick={handleResetAgentPassword} disabled={saving || !resetUsername || !resetPassword} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-amber-600 py-2.5 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50">
@@ -710,3 +747,4 @@ export default function AgentManagement() {
     </div>
   );
 }
+

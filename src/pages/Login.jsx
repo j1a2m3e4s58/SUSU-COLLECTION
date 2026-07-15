@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/components/ui/use-toast";
 import AuthLayout from "@/components/AuthLayout";
-import { verifyAgentSetupPhone } from "@/api/authClient";
+import { verifyAgentSetupPhone, verifyAgentSetupToken } from "@/api/authClient";
 import { useAuth } from "@/lib/AuthContext";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 
@@ -84,12 +84,18 @@ export default function Login() {
     e.preventDefault();
     setLoading(true);
     try {
-      await verifyAgentSetupPhone({
+      const result = await verifyAgentSetupPhone({
         username,
         temporaryPassword: password,
         phone,
       });
-      showSuccess("Contact verified. Enter the verification token to continue.");
+      if (result?.testToken) {
+        setToken(result.testToken);
+        showSuccess(`Contact verified. Test token: ${result.testToken}`);
+      } else {
+        setToken("");
+        showSuccess("Contact verified. Enter the verification token sent to the agent.");
+      }
       setSetupStage("token");
     } catch (err) {
       showError(err.message || "Phone number does not match the supervisor record.");
@@ -98,14 +104,18 @@ export default function Login() {
     }
   };
 
-  const handleVerifyToken = (e) => {
+  const handleVerifyToken = async (e) => {
     e.preventDefault();
-    if (String(token).trim() !== "1234") {
-      showError("Invalid verification token.");
-      return;
+    setLoading(true);
+    try {
+      await verifyAgentSetupToken({ username, phone, token });
+      showSuccess("Token accepted. Set your permanent login details.");
+      setSetupStage("reset");
+    } catch (err) {
+      showError(err.message || "Invalid or expired verification token.");
+    } finally {
+      setLoading(false);
     }
-    showSuccess("Token accepted. Set your permanent login details.");
-    setSetupStage("reset");
   };
 
   const handleAgentSetup = async (e) => {
@@ -310,7 +320,7 @@ export default function Login() {
             </h2>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
               {setupStage === "phone" && "Enter the phone number your supervisor recorded."}
-              {setupStage === "token" && "Enter the verification token. Test token is 1234 until SMS is connected."}
+              {setupStage === "token" && "Enter the verification token generated for this login."}
               {setupStage === "reset" && "Choose your permanent username and password."}
             </p>
           </div>
@@ -331,10 +341,10 @@ export default function Login() {
             <form onSubmit={handleVerifyToken} className="space-y-3">
               <div className="space-y-1">
                 <Label htmlFor="agent-token" className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Verification Token</Label>
-                <Input id="agent-token" value={token} onChange={(e) => setToken(e.target.value)} className="h-10 glass-input text-sm" placeholder="1234" required autoFocus />
+                <Input id="agent-token" value={token} onChange={(e) => setToken(e.target.value)} className="h-10 glass-input text-sm" placeholder="6-digit token" required autoFocus />
               </div>
-              <Button type="submit" className="h-10 w-full glass-button text-sm font-bold uppercase tracking-[0.14em]" disabled={!token}>
-                Continue
+              <Button type="submit" className="h-10 w-full glass-button text-sm font-bold uppercase tracking-[0.14em]" disabled={loading || !token}>
+                {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Checking...</> : "Continue"}
               </Button>
             </form>
           )}

@@ -60,6 +60,14 @@ export async function verifyAgentSetupPhone(payload) {
   });
 }
 
+export async function verifyAgentSetupToken(payload) {
+  return request("/auth/agent-verify-token", {
+    username: payload.username,
+    phone: payload.phone,
+    token: payload.token,
+  });
+}
+
 export async function completeAgentSetup(payload) {
   const data = await request("/auth/agent-complete-setup", {
     username: payload.username,

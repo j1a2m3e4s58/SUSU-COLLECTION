@@ -37,7 +37,6 @@ const textFields = [
   ["loginSubtitle", "Login Subtitle"],
   ["loginButtonText", "Login Button Text"],
   ["authorizedAccessText", "Authorized Access Text"],
-  ["portalControlPassword", "Portal Control Password"],
 ];
 
 const labelFields = [

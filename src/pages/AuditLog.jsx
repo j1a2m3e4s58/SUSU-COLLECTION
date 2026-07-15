@@ -80,10 +80,10 @@ export default function AuditLog() {
         next.delete(item.id);
         return next;
       });
-      setSuccess('Audit log entry deleted.');
+      setSuccess('Audit log entry archived from the active view.');
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
-      setError(err.message || 'Could not delete this audit log entry.');
+      setError(err.message || 'Could not archive this audit log entry.');
     }
     setDeletingId(null);
   };
@@ -100,10 +100,10 @@ export default function AuditLog() {
       await deleteAuditLogs(idsToDelete);
       setLogs((current) => current.filter((item) => !idsToDeleteSet.has(String(item.id))));
       setSelectedIds(new Set());
-      setSuccess(`${selectedLogs.length} audit log entr${selectedLogs.length === 1 ? 'y' : 'ies'} deleted.`);
+      setSuccess(`${selectedLogs.length} audit log entr${selectedLogs.length === 1 ? 'y' : 'ies'} archived from the active view.`);
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
-      setError(err.message || 'Could not delete selected audit logs.');
+      setError(err.message || 'Could not archive selected audit logs.');
     }
     setDeletingSelected(false);
   };
@@ -112,8 +112,8 @@ export default function AuditLog() {
     setDeleteBackupReady(false);
     setConfirmDelete({
       mode: 'single',
-      title: 'Delete audit log entry?',
-      message: 'This audit trail record will be permanently removed from the local system.',
+      title: 'Archive audit log entry?',
+      message: 'This audit trail record will be hidden from the active log view while kept in the raw audit store.',
       count: 1,
       item,
     });
@@ -125,8 +125,8 @@ export default function AuditLog() {
     setDeleteBackupReady(false);
     setConfirmDelete({
       mode: 'bulk',
-      title: `Delete ${count} selected audit log entr${count === 1 ? 'y' : 'ies'}?`,
-      message: 'Selected audit trail records will be permanently removed from the local system.',
+      title: `Archive ${count} selected audit log entr${count === 1 ? 'y' : 'ies'}?`,
+      message: 'Selected audit trail records will be hidden from the active log view.',
       count,
     });
   };
@@ -135,7 +135,7 @@ export default function AuditLog() {
     const target = confirmDelete;
     if (!target) return;
     if (!deleteBackupReady) {
-      setError('Export a backup before deleting audit log records.');
+      setError('Export a backup before archiving audit log records.');
       return;
     }
     setConfirmDelete(null);
@@ -188,9 +188,9 @@ export default function AuditLog() {
       link.remove();
       URL.revokeObjectURL(url);
       setDeleteBackupReady(true);
-      setSuccess('Backup exported. You can now delete the selected audit log record(s).');
+      setSuccess('Backup exported. You can now archive the selected audit log record(s).');
     } catch (err) {
-      setError(err.message || 'Could not export backup before delete.');
+      setError(err.message || 'Could not export backup before archiving.');
     } finally {
       setExportingBackup(false);
     }
@@ -223,7 +223,7 @@ export default function AuditLog() {
               <button onClick={requestDeleteSelected} disabled={deletingSelected}
                 className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50">
                 {deletingSelected ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                Delete Selected ({selectedIds.size})
+                Archive Selected ({selectedIds.size})
               </button>
             )}
             <button onClick={exportAuditPdf}
@@ -277,7 +277,7 @@ export default function AuditLog() {
                     <td className="py-3 px-3 text-right">
                       <button onClick={() => requestDelete(item)} disabled={deletingId === item.id} className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-destructive hover:bg-destructive/10">
                         <Trash2 className="h-3.5 w-3.5" />
-                        {deletingId === item.id ? 'Deleting...' : 'Delete'}
+                        {deletingId === item.id ? 'Archiving...' : 'Archive'}
                       </button>
                     </td>
                   )}
@@ -309,7 +309,7 @@ export default function AuditLog() {
                     <span className="text-xs text-muted-foreground">{item.ipAddress || '-'}</span>
                     <div className="flex gap-2">
                       {String(item.target || '').length > 120 && <button onClick={() => setDetailTarget(item)} className="text-xs text-blue-500">View Details</button>}
-                      {canDeleteAudit && <button onClick={() => requestDelete(item)} className="text-xs text-destructive">Delete</button>}
+                      {canDeleteAudit && <button onClick={() => requestDelete(item)} className="text-xs text-destructive">Archive</button>}
                     </div>
                   </div>
                 </div>
@@ -337,8 +337,8 @@ export default function AuditLog() {
               {confirmDelete.count} entr{confirmDelete.count === 1 ? 'y' : 'ies'} selected. This action cannot be undone.
             </div>
             <div className="mt-3 rounded-xl border border-blue-500/20 bg-blue-500/10 p-3 text-sm text-muted-foreground">
-              Export a backup before deleting so the local system can be restored if needed.
-              {deleteBackupReady && <span className="mt-1 block font-medium text-emerald-500">Backup exported for this delete action.</span>}
+              Export a backup before archiving so the local system can be restored if needed.
+              {deleteBackupReady && <span className="mt-1 block font-medium text-emerald-500">Backup exported for this archive action.</span>}
             </div>
             <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <button
@@ -364,7 +364,7 @@ export default function AuditLog() {
                 className="inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
               >
                 {deletingSelected || deletingId ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                Delete
+                Archive
               </button>
             </div>
           </div>
@@ -391,3 +391,6 @@ export default function AuditLog() {
     </div>
   );
 }
+
+
+

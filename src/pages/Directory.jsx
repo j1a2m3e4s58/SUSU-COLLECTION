@@ -659,7 +659,7 @@ export default function Directory() {
               />
             </div>
             <div className="rounded-lg border border-primary/20 bg-primary/10 p-3 text-xs text-muted-foreground">
-              First login will ask for this phone number, token 1234, then a permanent password.
+              First login will ask for this phone number, then generate a one-time setup token before a permanent password.
             </div>
           </div>
 

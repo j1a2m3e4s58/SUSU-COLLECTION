@@ -25,6 +25,7 @@ PASSWORD_STORE_PATH = os.path.join(DATA_DIR, "password_store.json")
 USERS_STORE_PATH = os.path.join(DATA_DIR, "users_store.json")
 PENDING_VERIFICATIONS_PATH = os.path.join(DATA_DIR, "pending_verifications.json")
 RESET_TOKENS_PATH = os.path.join(DATA_DIR, "reset_tokens.json")
+AGENT_SETUP_TOKENS_PATH = os.path.join(DATA_DIR, "agent_setup_tokens.json")
 SESSIONS_STORE_PATH = os.path.join(DATA_DIR, "sessions_store.json")
 ANNOUNCEMENTS_STORE_PATH = os.path.join(DATA_DIR, "announcements_store.json")
 FORMS_STORE_PATH = os.path.join(DATA_DIR, "forms_store.json")
@@ -37,6 +38,7 @@ TRAINING_REMINDERS_STORE_PATH = os.path.join(DATA_DIR, "training_reminders_store
 AUDIT_LOGS_STORE_PATH = os.path.join(DATA_DIR, "audit_logs_store.json")
 PORTAL_SETTINGS_STORE_PATH = os.path.join(DATA_DIR, "portal_settings_store.json")
 CUSTOMERS_STORE_PATH = os.path.join(DATA_DIR, "customers_store.json")
+CUSTOMER_IMPORTS_STORE_PATH = os.path.join(DATA_DIR, "customer_imports_store.json")
 COLLECTIONS_STORE_PATH = os.path.join(DATA_DIR, "collections_store.json")
 DAILY_CLOSES_STORE_PATH = os.path.join(DATA_DIR, "daily_closes_store.json")
 UPLOADS_DIR = os.path.join(DATA_DIR, "uploads")
@@ -46,7 +48,7 @@ RESET_TOKEN_TTL_SECONDS = 30 * 60
 VERIFICATION_TTL_SECONDS = 15 * 60
 SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 TRAINING_REMINDER_COOLDOWN_SECONDS = 24 * 60 * 60
-PORTAL_CONTROL_PASSWORD = "T4n4AMEg8f52468"
+PORTAL_CONTROL_PASSWORD = str(os.getenv("PORTAL_CONTROL_PASSWORD", "") or "").strip()
 RATE_LIMIT_WINDOW_SECONDS = 15 * 60
 RATE_LIMIT_MAX_ATTEMPTS = 8
 DEFAULT_PORTAL_BRANCHES = [
@@ -1107,6 +1109,49 @@ def save_reset_tokens(store: dict[str, dict]) -> None:
     atomic_write_json(RESET_TOKENS_PATH, store)
 
 
+def load_agent_setup_tokens() -> dict[str, dict]:
+    raw = read_json_file(AGENT_SETUP_TOKENS_PATH, {})
+    if not isinstance(raw, dict):
+        return {}
+    current = int(time.time())
+    tokens = {}
+    for username, item in raw.items():
+        if not isinstance(username, str) or not isinstance(item, dict):
+            continue
+        try:
+            normalized_username = normalize_agent_username(username)
+        except ValueError:
+            continue
+        expires_at = int(item.get("expiresAt", 0) or 0)
+        code = "".join(ch for ch in str(item.get("code", "")) if ch.isdigit())
+        if expires_at <= current or len(code) != 6:
+            continue
+        tokens[normalized_username] = {
+            "code": code,
+            "expiresAt": expires_at,
+            "phone": normalize_phone(item.get("phone")),
+        }
+    return tokens
+
+
+def save_agent_setup_tokens(store: dict[str, dict]) -> None:
+    atomic_write_json(AGENT_SETUP_TOKENS_PATH, store)
+
+
+def issue_agent_setup_token(username: str, phone: str) -> dict:
+    tokens = load_agent_setup_tokens()
+    code = generate_verification_code()
+    normalized_username = normalize_agent_username(username)
+    expires_at = int(time.time()) + int(load_portal_settings_store()["verificationMinutes"]) * 60
+    tokens[normalized_username] = {
+        "code": code,
+        "phone": normalize_phone(phone),
+        "expiresAt": expires_at,
+    }
+    save_agent_setup_tokens(tokens)
+    return tokens[normalized_username]
+
+
 def load_json_list_store(path: str) -> list[dict]:
     raw = read_json_file(path, [])
     return raw if isinstance(raw, list) else []
@@ -1223,6 +1268,18 @@ def save_portal_settings_store(settings: dict) -> None:
     atomic_write_json(PORTAL_SETTINGS_STORE_PATH, settings)
 
 
+def public_portal_settings(settings: dict | None = None) -> dict:
+    data = dict(settings or load_portal_settings_store())
+    data.pop("portalControlPassword", None)
+    data.pop("itAccessCode", None)
+    data.pop("hrAccessCode", None)
+    return data
+
+
+def configured_portal_control_password() -> str:
+    return PORTAL_CONTROL_PASSWORD
+
+
 def next_content_id(items: list[dict], floor: int = 1000) -> int:
     current = floor - 1
     for item in items:
@@ -1316,6 +1373,9 @@ def load_audit_logs_store() -> list[dict]:
                     "target": str(item.get("target", "")).strip(),
                     "ipAddress": str(item.get("ipAddress", "") or "unknown"),
                     "timestamp": int(item.get("timestamp", 0) or 0),
+                    "isArchived": bool(item.get("isArchived", False)),
+                    "archivedAt": int(item.get("archivedAt", 0) or 0),
+                    "archivedBy": str(item.get("archivedBy", "") or ""),
                 }
             )
         except Exception:
@@ -2556,7 +2616,11 @@ def get_audit_logs():
     _, _, error = require_owner_admin()
     if error:
         return error
-    logs = sorted(load_audit_logs_store(), key=lambda item: int(item["timestamp"]), reverse=True)
+    logs = sorted(
+        [item for item in load_audit_logs_store() if not bool(item.get("isArchived"))],
+        key=lambda item: int(item["timestamp"]),
+        reverse=True,
+    )
     return jsonify({"logs": logs})
 
 
@@ -2589,14 +2653,18 @@ def delete_audit_log(item_id: int):
     preflight = handle_options()
     if preflight:
         return preflight
-    _, _, error = require_owner_admin()
+    _, auth_user, error = require_owner_admin()
     if error:
         return error
     logs = load_audit_logs_store()
-    filtered = [item for item in logs if int(item.get("id", 0) or 0) != item_id]
-    if len(filtered) == len(logs):
+    item = next((entry for entry in logs if int(entry.get("id", 0) or 0) == item_id), None)
+    if not item:
         return jsonify({"error": "Log entry not found"}), 404
-    save_audit_logs_store(filtered)
+    item["isArchived"] = True
+    item["archivedAt"] = now_ms()
+    item["archivedBy"] = auth_user["id"]
+    save_audit_logs_store(logs)
+    record_audit_log(auth_user, "ARCHIVE_AUDIT_LOG", {"archivedId": item_id})
     return jsonify({"ok": True})
 
 
@@ -2605,7 +2673,7 @@ def delete_audit_logs():
     preflight = handle_options()
     if preflight:
         return preflight
-    _, _, error = require_owner_admin()
+    _, auth_user, error = require_owner_admin()
     if error:
         return error
     data, error = require_json()
@@ -2619,15 +2687,42 @@ def delete_audit_logs():
     if not ids:
         return jsonify({"ok": True})
     logs = load_audit_logs_store()
-    save_audit_logs_store(
-        [item for item in logs if int(item.get("id", 0) or 0) not in ids]
-    )
+    archived_at = now_ms()
+    for item in logs:
+        if int(item.get("id", 0) or 0) in ids:
+            item["isArchived"] = True
+            item["archivedAt"] = archived_at
+            item["archivedBy"] = auth_user["id"]
+    save_audit_logs_store(logs)
+    record_audit_log(auth_user, "ARCHIVE_AUDIT_LOGS", {"archivedIds": sorted(ids), "count": len(ids)})
     return jsonify({"ok": True})
 
 
 @app.route("/api/portal-settings", methods=["GET"])
 def get_portal_settings():
-    return jsonify({"settings": load_portal_settings_store()})
+    return jsonify({"settings": public_portal_settings()})
+
+
+@app.route("/api/portal-settings/unlock", methods=["POST", "OPTIONS"])
+def unlock_portal_settings():
+    preflight = handle_options()
+    if preflight:
+        return preflight
+    _, auth_user, error = require_owner_admin()
+    if error:
+        return error
+    data, error = require_json()
+    if error:
+        return error
+    password = str(data.get("password", "") or "")
+    expected_password = configured_portal_control_password()
+    if not expected_password:
+        return jsonify({"error": "PORTAL_CONTROL_PASSWORD is not configured on the server."}), 500
+    if password.upper() != expected_password.upper():
+        record_audit_log(auth_user, "PORTAL_CONTROL_UNLOCK_FAILED", {"reason": "invalid_password"})
+        return jsonify({"error": "Portal control password is incorrect"}), 403
+    record_audit_log(auth_user, "PORTAL_CONTROL_UNLOCKED", {"ok": True})
+    return jsonify({"ok": True})
 
 
 @app.route("/api/portal-settings", methods=["POST", "OPTIONS"])
@@ -2642,8 +2737,12 @@ def update_portal_settings():
     if error:
         return error
     password = str(data.get("password", "") or "")
-    if password.upper() != str(load_portal_settings_store()["portalControlPassword"]).upper():
+    expected_password = configured_portal_control_password()
+    if not expected_password:
+        return jsonify({"error": "PORTAL_CONTROL_PASSWORD is not configured on the server."}), 500
+    if password.upper() != expected_password.upper():
         return jsonify({"error": "Portal control password is incorrect"}), 403
+    current_settings = load_portal_settings_store()
     branches = normalize_portal_branches(data.get("branches"))
     settings = {
         "bankName": str(data.get("bankName") or DEFAULT_PORTAL_SETTINGS["bankName"]).strip(),
@@ -2659,7 +2758,7 @@ def update_portal_settings():
         "loginSubtitle": str(data.get("loginSubtitle") or DEFAULT_PORTAL_SETTINGS["loginSubtitle"]),
         "loginButtonText": str(data.get("loginButtonText") or DEFAULT_PORTAL_SETTINGS["loginButtonText"]),
         "authorizedAccessText": str(data.get("authorizedAccessText") or DEFAULT_PORTAL_SETTINGS["authorizedAccessText"]),
-        "portalControlPassword": str(data.get("portalControlPassword") or DEFAULT_PORTAL_SETTINGS["portalControlPassword"]),
+        "portalControlPassword": "",
         "itAccessCode": str(data.get("itAccessCode") or ""),
         "hrAccessCode": str(data.get("hrAccessCode") or ""),
         "sessionDays": normalize_positive_number(data.get("sessionDays"), DEFAULT_PORTAL_SETTINGS["sessionDays"]),
@@ -2701,7 +2800,7 @@ def update_portal_settings():
         message=f"{auth_user['fullname']} updated portal branches, SUSU categories, labels, or access settings.",
         link_to="/portal-control",
     )
-    return jsonify({"ok": True, "settings": settings})
+    return jsonify({"ok": True, "settings": public_portal_settings(settings)})
 
 
 @app.route("/api/backup/export", methods=["GET"])
@@ -2735,8 +2834,9 @@ def export_production_backup():
             "trainingDocumentOpens": load_training_document_opens_store(),
             "trainingReminders": load_training_reminders_store(),
             "auditLogs": load_audit_logs_store(),
-            "portalSettings": load_portal_settings_store(),
+            "portalSettings": public_portal_settings(),
             "customers": load_json_list_store(CUSTOMERS_STORE_PATH),
+            "customerImports": load_json_list_store(CUSTOMER_IMPORTS_STORE_PATH),
             "collections": load_json_list_store(COLLECTIONS_STORE_PATH),
             "dailyCloses": load_json_list_store(DAILY_CLOSES_STORE_PATH),
         },
@@ -2770,7 +2870,10 @@ def import_production_backup():
     if error:
         return error
     password = str(data.get("password", "") or "")
-    if password.upper() != str(load_portal_settings_store()["portalControlPassword"]).upper():
+    expected_password = configured_portal_control_password()
+    if not expected_password:
+        return jsonify({"error": "PORTAL_CONTROL_PASSWORD is not configured on the server."}), 500
+    if password.upper() != expected_password.upper():
         return jsonify({"error": "Portal control password is incorrect"}), 403
     stores = data.get("stores") if isinstance(data.get("stores"), dict) else None
     if not stores:
@@ -2782,8 +2885,9 @@ def import_production_backup():
         "presence": load_presence_store(),
         "notifications": load_json_list_store(NOTIFICATIONS_STORE_PATH),
         "auditLogs": load_audit_logs_store(),
-        "portalSettings": load_portal_settings_store(),
+        "portalSettings": public_portal_settings(),
         "customers": load_json_list_store(CUSTOMERS_STORE_PATH),
+        "customerImports": load_json_list_store(CUSTOMER_IMPORTS_STORE_PATH),
         "collections": load_json_list_store(COLLECTIONS_STORE_PATH),
         "dailyCloses": load_json_list_store(DAILY_CLOSES_STORE_PATH),
     }
@@ -2801,10 +2905,18 @@ def import_production_backup():
             save_audit_logs_store(stores.get("auditLogs") or [])
         if "portalSettings" in stores and isinstance(stores.get("portalSettings"), dict):
             imported_settings = {**DEFAULT_PORTAL_SETTINGS, **stores.get("portalSettings")}
+            imported_settings.pop("portalControlPassword", None)
+            imported_settings.pop("itAccessCode", None)
+            imported_settings.pop("hrAccessCode", None)
             imported_settings["departments"] = DEFAULT_PORTAL_DEPARTMENTS
+            imported_settings["portalControlPassword"] = ""
+            imported_settings["itAccessCode"] = ""
+            imported_settings["hrAccessCode"] = ""
             save_portal_settings_store(imported_settings)
         if "customers" in stores:
             save_json_list_store(CUSTOMERS_STORE_PATH, stores.get("customers") or [])
+        if "customerImports" in stores:
+            save_json_list_store(CUSTOMER_IMPORTS_STORE_PATH, stores.get("customerImports") or [])
         if "collections" in stores:
             save_json_list_store(COLLECTIONS_STORE_PATH, stores.get("collections") or [])
         if "dailyCloses" in stores:
@@ -2817,12 +2929,13 @@ def import_production_backup():
         save_audit_logs_store(current_backup["auditLogs"])
         save_portal_settings_store(current_backup["portalSettings"])
         save_json_list_store(CUSTOMERS_STORE_PATH, current_backup["customers"])
+        save_json_list_store(CUSTOMER_IMPORTS_STORE_PATH, current_backup["customerImports"])
         save_json_list_store(COLLECTIONS_STORE_PATH, current_backup["collections"])
         save_json_list_store(DAILY_CLOSES_STORE_PATH, current_backup["dailyCloses"])
         return jsonify({"error": f"Backup import failed and current data was restored: {exc}"}), 400
 
     record_audit_log(auth_user, "IMPORT_BACKUP", {"stores": list(stores.keys())})
-    return jsonify({"ok": True, "settings": load_portal_settings_store()})
+    return jsonify({"ok": True, "settings": public_portal_settings()})
 
 
 @app.route("/api/maintenance/clear-test-data", methods=["POST", "OPTIONS"])
@@ -3247,12 +3360,44 @@ def import_customers():
         created.append(customer)
     if created:
         save_json_list_store(CUSTOMERS_STORE_PATH, customers)
+        imports = load_json_list_store(CUSTOMER_IMPORTS_STORE_PATH)
+        imports.insert(
+            0,
+            {
+                "id": f"import-{now_ms()}-{secrets.token_hex(3)}",
+                "branch": import_branch,
+                "createdCount": len(created),
+                "skippedCount": len(skipped),
+                "createdCustomerIds": [item["id"] for item in created],
+                "skipped": skipped[:50],
+                "uploadedBy": auth_user["fullname"],
+                "uploadedById": auth_user["id"],
+                "uploadedByEmail": auth_user["email"],
+                "uploadedAt": now_ms(),
+            },
+        )
+        save_json_list_store(CUSTOMER_IMPORTS_STORE_PATH, imports)
         record_audit_log(
             auth_user,
             "IMPORT_CUSTOMERS",
             {"branch": import_branch, "created": len(created), "skipped": len(skipped)},
         )
     return jsonify({"ok": True, "created": created, "createdCount": len(created), "skipped": skipped})
+
+
+@app.route("/api/customers/imports", methods=["GET"])
+def get_customer_imports():
+    _, auth_user, error = require_authenticated_user()
+    if error:
+        return error
+    if not can_manage_agents_and_customers(auth_user):
+        return jsonify({"error": "Only supervisors or owner admin can view customer import history."}), 403
+    imports = [
+        item for item in load_json_list_store(CUSTOMER_IMPORTS_STORE_PATH)
+        if is_global_manager(auth_user) or branch_allowed_for_user(auth_user, item.get("branch", ""))
+    ]
+    imports.sort(key=lambda item: int(item.get("uploadedAt", 0) or 0), reverse=True)
+    return jsonify({"imports": imports})
 
 
 @app.route("/api/collections", methods=["GET"])
@@ -3402,13 +3547,16 @@ def review_collection(collection_id: str):
         },
     )
     if status == "queried" and item.get("agent_id"):
-        create_notifications_for_users(
-            [str(item.get("agent_id"))],
-            kind="correction",
-            title="Correction requested",
-            message=f"{auth_user['fullname']} requested a correction for {item.get('account_name', 'a transaction')}: {note}",
-            link_to="/transactions",
-        )
+        users = load_user_store()
+        agent_user = find_user_by_id(users, str(item.get("agent_id")))
+        if agent_user:
+            create_notifications_for_users(
+                [agent_user],
+                kind="correction",
+                title="Correction requested",
+                message=f"{auth_user['fullname']} requested a correction for {item.get('account_name', 'a transaction')}: {note}",
+                link_to="/transactions",
+            )
     return jsonify({"ok": True, "collection": item})
 
 
@@ -4239,7 +4387,12 @@ def auth_agent_verify_phone():
             record_auth_failure(limit_key)
             return jsonify({"error": "Phone number does not match the supervisor record."}), 400
         clear_auth_failures(limit_key)
-        return jsonify({"ok": True, "message": "Verification token ready."})
+        setup_token = issue_agent_setup_token(username, phone)
+        response = {"ok": True, "message": "Verification token generated."}
+        if str(load_portal_settings_store().get("appMode", "test")).lower() == "test":
+            response["testToken"] = setup_token["code"]
+            response["message"] = "Test verification token generated."
+        return jsonify(response)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
@@ -4262,11 +4415,13 @@ def auth_agent_complete_setup():
         limit_key = rate_limit_key("agent-setup-complete", username)
         if auth_rate_limited(limit_key):
             return jsonify({"error": "Too many setup attempts. Please wait 15 minutes and try again."}), 429
-        if token_code != "1234":
-            record_auth_failure(limit_key)
-            return jsonify({"error": "Invalid verification token."}), 400
         if len(new_password) < 8:
             return jsonify({"error": "New password must be at least 8 characters."}), 400
+        setup_tokens = load_agent_setup_tokens()
+        setup_entry = setup_tokens.get(username)
+        if not setup_entry or setup_entry.get("code") != token_code:
+            record_auth_failure(limit_key)
+            return jsonify({"error": "Invalid or expired verification token."}), 400
         users = load_user_store()
         user = find_user_by_username(users, username)
         passwords = load_password_store()
@@ -4280,6 +4435,9 @@ def auth_agent_complete_setup():
         if "".join(ch for ch in str(user.get("phone") or "") if ch.isdigit()) != "".join(ch for ch in phone if ch.isdigit()):
             record_auth_failure(limit_key)
             return jsonify({"error": "Phone number does not match the supervisor record."}), 400
+        if normalize_phone(setup_entry.get("phone")) and "".join(ch for ch in normalize_phone(setup_entry.get("phone")) if ch.isdigit()) != "".join(ch for ch in phone if ch.isdigit()):
+            record_auth_failure(limit_key)
+            return jsonify({"error": "Verification token does not match this phone number."}), 400
         if new_username != username:
             passwords.pop(agent_password_key(username), None)
             user["loginUsername"] = new_username
@@ -4289,6 +4447,8 @@ def auth_agent_complete_setup():
         passwords[agent_password_key(new_username)] = hash_password_for_storage(new_password)
         save_user_store(users)
         save_password_store(passwords)
+        setup_tokens.pop(username, None)
+        save_agent_setup_tokens(setup_tokens)
         session_token = issue_session(user["id"])
         clear_auth_failures(limit_key)
         record_audit_log(
@@ -4297,6 +4457,34 @@ def auth_agent_complete_setup():
             staff_audit_target(user, {"temporaryUsername": username, "permanentUsername": new_username}),
         )
         return jsonify({"ok": True, "user": user, "sessionToken": session_token})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/api/auth/agent-verify-token", methods=["POST", "OPTIONS"])
+def auth_agent_verify_token():
+    preflight = handle_options()
+    if preflight:
+        return preflight
+    data, error = require_json()
+    if error:
+        return error
+    try:
+        username = normalize_agent_username(data.get("username"))
+        phone = normalize_phone(data.get("phone"))
+        token_code = "".join(ch for ch in str(data.get("token") or "") if ch.isdigit())
+        limit_key = rate_limit_key("agent-setup-token", username)
+        if auth_rate_limited(limit_key):
+            return jsonify({"error": "Too many setup attempts. Please wait 15 minutes and try again."}), 429
+        setup_entry = load_agent_setup_tokens().get(username)
+        if not setup_entry or setup_entry.get("code") != token_code:
+            record_auth_failure(limit_key)
+            return jsonify({"error": "Invalid or expired verification token."}), 400
+        if normalize_phone(setup_entry.get("phone")) and "".join(ch for ch in normalize_phone(setup_entry.get("phone")) if ch.isdigit()) != "".join(ch for ch in phone if ch.isdigit()):
+            record_auth_failure(limit_key)
+            return jsonify({"error": "Verification token does not match this phone number."}), 400
+        clear_auth_failures(limit_key)
+        return jsonify({"ok": True})
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
