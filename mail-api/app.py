@@ -10,6 +10,7 @@ import threading
 import time
 from email.message import EmailMessage
 from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
+from urllib.request import Request, urlopen
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, redirect, request, send_from_directory
@@ -20,6 +21,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 DATA_DIR = os.getenv("PORTAL_DATA_DIR", BASE_DIR).strip() or BASE_DIR
 FRONTEND_PUBLIC_DIR = os.getenv("PORTAL_FRONTEND_DIR", os.path.join(BASE_DIR, "public")).strip() or os.path.join(BASE_DIR, "public")
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+PG_LOCK_KEY = 2026071501
 
 OFFICIAL_EMAIL_DOMAIN = "@bawjiasecommunitybank.com"
 PRESENCE_STORE_PATH = os.path.join(DATA_DIR, "presence_store.json")
@@ -291,7 +294,88 @@ app = Flask(__name__, static_folder=None)
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 FAILED_AUTH_ATTEMPTS: dict[str, list[int]] = {}
-DATA_LOCK = threading.RLock()
+
+
+def pg_enabled() -> bool:
+    return bool(DATABASE_URL)
+
+
+def pg_connect():
+    if not DATABASE_URL:
+        return None
+    try:
+        import psycopg
+    except ImportError as exc:
+        raise RuntimeError("DATABASE_URL is configured but psycopg is not installed") from exc
+    return psycopg.connect(DATABASE_URL)
+
+
+_PG_TABLE_READY = False
+_PG_TABLE_LOCK = threading.Lock()
+
+
+def ensure_pg_store_table() -> None:
+    global _PG_TABLE_READY
+    if not pg_enabled() or _PG_TABLE_READY:
+        return
+    with _PG_TABLE_LOCK:
+        if _PG_TABLE_READY:
+            return
+        with pg_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS portal_store (
+                      store_key TEXT PRIMARY KEY,
+                      payload JSONB NOT NULL,
+                      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+            conn.commit()
+        _PG_TABLE_READY = True
+
+
+def store_key_for_path(path: str) -> str:
+    return os.path.basename(path)
+
+
+class PortalDataLock:
+    def __init__(self):
+        self._local_lock = threading.RLock()
+        self._state = threading.local()
+
+    def __enter__(self):
+        depth = int(getattr(self._state, "depth", 0) or 0)
+        if depth == 0:
+            self._local_lock.acquire()
+            self._state.pg_conn = None
+            if pg_enabled():
+                ensure_pg_store_table()
+                conn = pg_connect()
+                conn.autocommit = True
+                with conn.cursor() as cur:
+                    cur.execute("SELECT pg_advisory_lock(%s)", (PG_LOCK_KEY,))
+                self._state.pg_conn = conn
+        self._state.depth = depth + 1
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        depth = int(getattr(self._state, "depth", 1) or 1) - 1
+        self._state.depth = max(0, depth)
+        if depth == 0:
+            conn = getattr(self._state, "pg_conn", None)
+            if conn is not None:
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT pg_advisory_unlock(%s)", (PG_LOCK_KEY,))
+                finally:
+                    conn.close()
+                    self._state.pg_conn = None
+            self._local_lock.release()
+
+
+DATA_LOCK = PortalDataLock()
 
 
 @app.before_request
@@ -823,6 +907,22 @@ def verify_password(stored_value: str, password: str) -> bool:
 
 def atomic_write_json(path: str, payload) -> None:
     with DATA_LOCK:
+        if pg_enabled():
+            ensure_pg_store_table()
+            key = store_key_for_path(path)
+            with pg_connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO portal_store (store_key, payload, updated_at)
+                        VALUES (%s, %s::jsonb, NOW())
+                        ON CONFLICT (store_key)
+                        DO UPDATE SET payload = EXCLUDED.payload, updated_at = NOW()
+                        """,
+                        (key, json.dumps(payload, ensure_ascii=True)),
+                    )
+                conn.commit()
+            return
         directory = os.path.dirname(path)
         fd, tmp_path = tempfile.mkstemp(prefix="tmp-", suffix=".json", dir=directory)
         try:
@@ -845,6 +945,28 @@ def atomic_write_json(path: str, payload) -> None:
 
 
 def read_json_file(path: str, default):
+    if pg_enabled():
+        ensure_pg_store_table()
+        key = store_key_for_path(path)
+        with pg_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT payload FROM portal_store WHERE store_key = %s", (key,))
+                row = cur.fetchone()
+                if row:
+                    return row[0]
+                initial_payload = default
+                if os.path.exists(path):
+                    try:
+                        with open(path, "r", encoding="utf-8") as handle:
+                            initial_payload = json.load(handle)
+                    except Exception:
+                        initial_payload = default
+                cur.execute(
+                    "INSERT INTO portal_store (store_key, payload) VALUES (%s, %s::jsonb) ON CONFLICT DO NOTHING",
+                    (key, json.dumps(initial_payload, ensure_ascii=True)),
+                )
+            conn.commit()
+        return initial_payload
     if not os.path.exists(path):
         return default
     try:
@@ -1675,6 +1797,29 @@ def send_mail(to_email: str, subject: str, text_body: str, html_body: str):
         smtp.send_message(msg)
 
 
+def send_sms_token(phone: str, code: str, purpose: str = "agent_setup") -> bool:
+    webhook = env_secret("SMS_WEBHOOK_URL")
+    if not webhook:
+        return False
+    payload = json.dumps({
+        "phone": phone,
+        "message": f"Your BCB SUSU verification code is {code}. It expires shortly.",
+        "code": code,
+        "purpose": purpose,
+    }).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    api_key = env_secret("SMS_WEBHOOK_API_KEY")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    req = Request(webhook, data=payload, headers=headers, method="POST")
+    try:
+        with urlopen(req, timeout=15) as response:
+            return 200 <= int(response.status) < 300
+    except Exception as exc:
+        app.logger.warning("SMS token delivery failed: %s", exc)
+        return False
+
+
 def send_verification_code_email(email: str, code: str) -> None:
     text_body = (
         "Dear Staff,\n\n"
@@ -2456,6 +2601,43 @@ def save_uploaded_media(file_storage, kind: str) -> dict:
 @app.route("/api/health", methods=["GET"])
 def health():
     return jsonify({"ok": True})
+
+
+@app.route("/api/production-status", methods=["GET"])
+def production_status():
+    _, _, error = require_owner_admin()
+    if error:
+        return error
+    checks = {
+        "database": {
+            "ok": pg_enabled(),
+            "label": "PostgreSQL DATABASE_URL configured",
+        },
+        "portalPublicUrl": {
+            "ok": bool(portal_public_url()),
+            "label": "PORTAL_PUBLIC_URL configured",
+        },
+        "portalControlPassword": {
+            "ok": bool(configured_portal_control_password()),
+            "label": "PORTAL_CONTROL_PASSWORD configured",
+        },
+        "mail": {
+            "ok": all(env_secret(name) for name in ["MAIL_SERVER", "MAIL_USERNAME", "MAIL_PASSWORD", "MAIL_DEFAULT_SENDER"]),
+            "label": "Mail server configured",
+        },
+        "sms": {
+            "ok": bool(env_secret("SMS_WEBHOOK_URL")),
+            "label": "SMS webhook configured",
+        },
+    }
+    required = ["database", "portalPublicUrl", "portalControlPassword", "mail"]
+    live_ready = all(checks[key]["ok"] for key in required)
+    return jsonify({
+        "storageBackend": "postgres" if pg_enabled() else "json-file",
+        "liveReady": live_ready,
+        "checks": checks,
+        "required": required,
+    })
 
 
 @app.route("/uploads/<path:filename>", methods=["GET"])
@@ -4490,10 +4672,13 @@ def auth_agent_verify_phone():
             return jsonify({"error": "Phone number does not match the supervisor record."}), 400
         clear_auth_failures(limit_key)
         setup_token = issue_agent_setup_token(username, phone)
-        response = {"ok": True, "message": "Verification token generated."}
-        if str(load_portal_settings_store().get("appMode", "test")).lower() == "test":
+        app_mode = str(load_portal_settings_store().get("appMode", "test")).lower()
+        response = {"ok": True, "message": "Verification token sent."}
+        if app_mode == "test":
             response["testToken"] = setup_token["code"]
             response["message"] = "Test verification token generated."
+        elif not send_sms_token(phone, setup_token["code"]):
+            return jsonify({"error": "SMS delivery is not configured. Contact the supervisor or owner admin."}), 500
         return jsonify(response)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400

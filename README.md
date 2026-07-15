@@ -1,4 +1,4 @@
-# Base44 Project
+﻿# Base44 Project
 
 Use this repository to run and edit the app locally, then publish changes back through Base44.
 
@@ -73,16 +73,20 @@ base44 dashboard open
 Before using the portal for real deposits:
 
 1. Export a full backup from **Portal Control**.
-2. Set `PORTAL_CONTROL_PASSWORD` as a private environment variable on the backend host.
-3. Confirm the deployed backend uses persistent storage. On Render, attach a persistent disk or a real database before collecting live deposits.
-4. Test these accounts separately: Owner Admin, Supervisor, and SUSU AGENT.
-5. Test customer import with CSV/XLSX columns: `Account Name`, `Account Number`, `Branch`.
-6. Confirm every customer account number is exactly 13 digits.
-7. Confirm SUSU AGENT users can record deposits only by exact account number search.
-8. Confirm supervisors can see and manage only their branch agents/customers.
-9. Switch **Test Mode** to **Live Mode** only after backup and role testing are complete.
+2. Set `DATABASE_URL` to a managed PostgreSQL database. When present, portal stores are kept in the `portal_store` table and critical financial writes use a PostgreSQL advisory lock across workers.
+3. Set `PORTAL_PUBLIC_URL` to the exact deployed HTTPS site URL. Password reset links are always generated from this trusted URL.
+4. Set `PORTAL_CONTROL_PASSWORD` as a private backend environment variable. Portal Control, backup restore, and Live Mode changes depend on it.
+5. Configure `MAIL_SERVER`, `MAIL_USERNAME`, `MAIL_PASSWORD`, and `MAIL_DEFAULT_SENDER` for verification/reset email.
+6. Configure `SMS_WEBHOOK_URL` and optional `SMS_WEBHOOK_API_KEY` before Live Mode so agent setup tokens are delivered by SMS instead of displayed for testing.
+7. Export and store backups outside the app host. For production, schedule daily PostgreSQL backups in Render/cPanel and test restoring one backup before launch.
+8. Test these accounts separately: Owner Admin, Supervisor, and SUSU AGENT.
+9. Test customer import with CSV/XLSX columns: `Account Name`, `Account Number`, `Branch`.
+10. Confirm every customer account number is exactly 13 digits.
+11. Confirm SUSU AGENT users can record deposits only by exact account number search and cannot add customers.
+12. Confirm supervisors can see and manage only their branch agents/customers.
+13. Switch **Test Mode** to **Live Mode** only after Portal Control production checks pass.
 
-For Render deploys, push to GitHub and use **Manual Deploy -> Deploy latest commit** if automatic deploy does not start.
+For Render deploys, push to GitHub and use **Manual Deploy -> Deploy latest commit** if automatic deploy does not start. The included `render.yaml` provisions a paid starter web service and a managed PostgreSQL database; review costs before applying it.
 
 ## Docs & Support
 

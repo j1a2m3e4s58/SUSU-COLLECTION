@@ -16,6 +16,7 @@ import {
   clearTestData,
   exportBackup,
   getPortalSettings,
+  getProductionStatus,
   getStoredPortalControlPassword,
   importBackup,
   removeTestCustomers,
@@ -174,14 +175,19 @@ export default function PortalControl() {
   const [clearBackupReady, setClearBackupReady] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [productionStatus, setProductionStatus] = useState(null);
 
   useEffect(() => {
     let mounted = true;
-    getPortalSettings()
-      .then((data) => {
+    Promise.all([
+      getPortalSettings(),
+      getProductionStatus().catch(() => null),
+    ])
+      .then(([data, status]) => {
         if (!mounted) return;
         setSettings(data);
         setDraft(data);
+        setProductionStatus(status);
         setError("");
       })
       .catch((err) => {
@@ -208,6 +214,22 @@ export default function PortalControl() {
     if ((settings?.appMode || "test") !== "live" && draft.appMode === "live" && !clearBackupReady) {
       setError("Export a backup before switching the portal to Live Mode.");
       return;
+    }
+    if ((settings?.appMode || "test") !== "live" && draft.appMode === "live") {
+      try {
+        const status = await getProductionStatus();
+        if (!status.liveReady) {
+          const missing = Object.values(status.checks || {})
+            .filter((item) => !item.ok)
+            .map((item) => item.label)
+            .join(", ");
+          setError(`Live Mode is blocked until production checks pass: ${missing || "missing production configuration"}.`);
+          return;
+        }
+      } catch (err) {
+        setError(err.message || "Could not verify production readiness before Live Mode.");
+        return;
+      }
     }
 
     const payload = {
@@ -400,6 +422,28 @@ export default function PortalControl() {
         <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-600">
           {success}
         </div>
+      )}
+
+      {productionStatus && (
+        <section className="rounded-xl border border-border bg-card p-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="font-heading text-base font-bold text-foreground">Production Checks</h2>
+              <p className="text-sm text-muted-foreground">Live Mode requires database storage, trusted URLs, mail, and portal password protection.</p>
+            </div>
+            <Badge variant={productionStatus.liveReady ? "default" : "secondary"}>
+              {productionStatus.liveReady ? "Live ready" : "Action needed"}
+            </Badge>
+          </div>
+          <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {Object.entries(productionStatus.checks || {}).map(([key, item]) => (
+              <div key={key} className={`rounded-lg border p-3 text-sm ${item.ok ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600" : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400"}`}>
+                <span className="font-semibold">{item.ok ? "Ready" : "Missing"}</span>
+                <p className="mt-1 text-xs opacity-90">{item.label}</p>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
 
       <section className="rounded-xl border border-blue-500/20 bg-blue-500/10 p-4">

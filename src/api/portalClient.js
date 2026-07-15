@@ -1,4 +1,4 @@
-import { getSessionToken } from "@/api/authClient";
+﻿import { getSessionToken } from "@/api/authClient";
 
 const API_ROOT = (import.meta.env.VITE_MAIL_API_URL || "/mail-api/api").replace(/\/$/, "");
 export const PORTAL_CONTROL_PASSWORD_KEY = "susu.portalControlPassword";
@@ -96,6 +96,10 @@ export async function unlockPortalControl(password) {
     method: "POST",
     body: { password },
   });
+}
+
+export async function getProductionStatus() {
+  return apiRequest("/production-status");
 }
 
 export async function getActiveStaff() {
