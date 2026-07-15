@@ -135,29 +135,12 @@ export default function FieldCollection() {
 
     setSaving(true);
     setError('');
-    const t = new Date();
-    const dateStr = selectedDate;
-    const timeStr = t.toLocaleTimeString('en', { hour12: false });
-    const ref = `SUS-${dateStr.replace(/-/g, '')}-${t.getTime().toString().slice(-6)}`;
-
     try {
+      const idempotencyKey = `${user?.id || 'agent'}:${selectedCustomer.id}:${selectedDate}:${numAmount.toFixed(2)}`;
       const record = await createCollection({
-        transaction_reference: ref,
+        idempotency_key: idempotencyKey,
         customer_id: selectedCustomer.id,
-        account_name: selectedCustomer.account_name,
-        account_number: selectedCustomer.account_number,
         amount: numAmount,
-        agent_id: user?.id || 'unknown',
-        agent_name: user?.full_name || 'Agent',
-        agent_code: user?.agent_code || 'N/A',
-        branch_id: selectedCustomer.branch_id,
-        branch_name: selectedCustomer.branch_name,
-        transaction_date: dateStr,
-        transaction_time: timeStr,
-        timestamp: t.toISOString(),
-        recorded_by: user?.full_name || 'Agent',
-        status: 'completed',
-        supervisor_review_status: 'pending',
       });
       setReceipt(record);
       setSelectedCustomer(null);

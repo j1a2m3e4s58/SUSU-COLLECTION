@@ -96,8 +96,7 @@ export async function resendVerification(email) {
 }
 
 export async function requestPasswordReset(email) {
-  const resetPageUrl = `${window.location.origin}/reset-password`;
-  return request("/auth/request-password-reset", { email, resetPageUrl });
+  return request("/auth/request-password-reset", { email });
 }
 
 export async function resetPassword(token, newPassword) {
@@ -114,3 +113,4 @@ export async function logoutFromServer() {
     clearStoredAuthUser();
   }
 }
+
