@@ -63,3 +63,17 @@ def test_field_collection_does_not_send_protected_deposit_fields():
     ]
     for field in forbidden:
         assert field not in submit_block
+
+def test_default_password_seeds_initial_staff(monkeypatch, tmp_path):
+    monkeypatch.setenv("PORTAL_DEFAULT_INITIAL_PASSWORD", "SeedPass123!")
+    app_module = load_app(monkeypatch, tmp_path)
+    passwords = app_module.load_password_store()
+    assert "jbruku@bawjiasecommunitybank.com" in passwords
+    assert app_module.verify_password(passwords["jbruku@bawjiasecommunitybank.com"], "SeedPass123!")
+    client = app_module.app.test_client()
+    response = client.post("/api/auth/login", json={
+        "email": "jbruku@bawjiasecommunitybank.com",
+        "passwordHash": "SeedPass123!",
+    })
+    assert response.status_code == 200
+    assert response.get_json()["user"]["email"] == "jbruku@bawjiasecommunitybank.com"

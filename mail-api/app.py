@@ -439,7 +439,7 @@ def seed_password_store_if_needed() -> None:
     existing = read_json_file(PASSWORD_STORE_PATH, {})
     passwords = existing if isinstance(existing, dict) else {}
     changed = False
-    for user in [OWNER_ADMIN_USER]:
+    for user in [OWNER_ADMIN_USER, *INITIAL_USERS]:
         email = str(user.get("email", "")).strip().lower()
         if not email or passwords.get(email):
             continue
