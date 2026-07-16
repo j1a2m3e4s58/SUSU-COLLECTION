@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import {
   clearTestData,
@@ -241,6 +242,7 @@ export default function PortalControl() {
       departmentChangeTypes: [],
       transferLocations: [],
       appMode: draft.appMode === "live" ? "live" : "test",
+      publicRegistrationEnabled: draft.publicRegistrationEnabled === true,
     };
 
     setSaving(true);
@@ -465,6 +467,16 @@ export default function PortalControl() {
               placeholder="Select mode"
               className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
             />
+            <label className="inline-flex min-h-10 items-center gap-3 rounded-lg border border-border bg-background/70 px-4 py-2 text-sm font-medium text-foreground">
+              <Switch
+                checked={draft.publicRegistrationEnabled === true}
+                onCheckedChange={(checked) => update("publicRegistrationEnabled", checked === true)}
+              />
+              <span className="leading-tight">
+                Show public Sign Up
+                <span className="block text-xs font-normal text-muted-foreground">Allows New Staff? Sign Up on login</span>
+              </span>
+            </label>
             <Button type="button" variant="outline" className="gap-2 bg-background/70" onClick={downloadBackup} disabled={exporting}>
               <Download className="h-4 w-4" />
               {exporting ? "Exporting..." : "Export Backup"}

@@ -13,8 +13,26 @@ def load_app(monkeypatch, tmp_path):
     return importlib.import_module("app")
 
 
-def test_public_registration_cannot_create_susu_agent(monkeypatch, tmp_path):
+def test_public_registration_disabled_by_default(monkeypatch, tmp_path):
     app_module = load_app(monkeypatch, tmp_path)
+    client = app_module.app.test_client()
+    response = client.post("/api/auth/register", json={
+        "fullname": "Jane Staff",
+        "phone": "0240000000",
+        "email": "janestaff@bawjiasecommunitybank.com",
+        "branch": "BAWJIASE",
+        "department": "SUSU",
+        "passwordHash": "StrongPass123!",
+    })
+    assert response.status_code == 403
+    assert "sign-up is currently disabled" in response.get_json()["error"]
+
+
+def test_public_registration_cannot_create_susu_agent_when_enabled(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    settings = app_module.load_portal_settings_store()
+    settings["publicRegistrationEnabled"] = True
+    app_module.save_portal_settings_store(settings)
     client = app_module.app.test_client()
     response = client.post("/api/auth/register", json={
         "fullname": "Bad Agent",

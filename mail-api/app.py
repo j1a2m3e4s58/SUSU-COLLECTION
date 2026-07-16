@@ -84,6 +84,7 @@ DEFAULT_PORTAL_SETTINGS = {
     "loginButtonText": "Secure Login",
     "authorizedAccessText": "Authorized Access Only",
     "appMode": "test",
+    "publicRegistrationEnabled": False,
     "portalControlPassword": PORTAL_CONTROL_PASSWORD,
     "itAccessCode": "",
     "hrAccessCode": "",
@@ -1381,6 +1382,7 @@ def load_portal_settings_store() -> dict:
         "trainingLabel": str(raw.get("trainingLabel") or DEFAULT_PORTAL_SETTINGS["trainingLabel"]),
         "formsLabel": str(raw.get("formsLabel") or DEFAULT_PORTAL_SETTINGS["formsLabel"]),
         "appMode": "live" if str(raw.get("appMode", DEFAULT_PORTAL_SETTINGS["appMode"])).strip().lower() == "live" else "test",
+        "publicRegistrationEnabled": bool(raw.get("publicRegistrationEnabled", DEFAULT_PORTAL_SETTINGS["publicRegistrationEnabled"])),
         "profileLabel": str(raw.get("profileLabel") or DEFAULT_PORTAL_SETTINGS["profileLabel"]),
         "activeStaffLabel": str(raw.get("activeStaffLabel") or DEFAULT_PORTAL_SETTINGS["activeStaffLabel"]),
         "branchCoverageLabel": str(raw.get("branchCoverageLabel") or DEFAULT_PORTAL_SETTINGS["branchCoverageLabel"]),
@@ -2992,6 +2994,7 @@ def update_portal_settings():
         "trainingLabel": str(data.get("trainingLabel") or DEFAULT_PORTAL_SETTINGS["trainingLabel"]),
         "formsLabel": str(data.get("formsLabel") or DEFAULT_PORTAL_SETTINGS["formsLabel"]),
         "appMode": "live" if str(data.get("appMode", "test")).strip().lower() == "live" else "test",
+        "publicRegistrationEnabled": bool(data.get("publicRegistrationEnabled", False)),
         "profileLabel": str(data.get("profileLabel") or DEFAULT_PORTAL_SETTINGS["profileLabel"]),
         "activeStaffLabel": str(data.get("activeStaffLabel") or DEFAULT_PORTAL_SETTINGS["activeStaffLabel"]),
         "branchCoverageLabel": str(data.get("branchCoverageLabel") or DEFAULT_PORTAL_SETTINGS["branchCoverageLabel"]),
@@ -4398,6 +4401,9 @@ def auth_register():
     if error:
         return error
     try:
+        settings = load_portal_settings_store()
+        if not settings.get("publicRegistrationEnabled", False):
+            return jsonify({"error": "Public staff sign-up is currently disabled. Ask a supervisor or owner admin to add your account."}), 403
         email = validate_email(str(data.get("email", "")))
         password = str(data.get("passwordHash", ""))
         department = normalize_portal_department_name(data.get("department"))

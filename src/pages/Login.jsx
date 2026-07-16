@@ -13,6 +13,8 @@ import { Eye, EyeOff, Loader2 } from "lucide-react";
 export default function Login() {
   const navigate = useNavigate();
   const { login, loginAgent, completeAgentFirstLogin, portalSettings } = useAuth();
+  const publicRegistrationEnabled = portalSettings?.publicRegistrationEnabled === true;
+
   const [mode, setMode] = useState("staff");
   const [setupStep, setSetupStep] = useState(false);
   const [setupStage, setSetupStage] = useState("phone");
@@ -296,12 +298,14 @@ export default function Login() {
         >
           {mode === "staff" ? "Agent username login" : "Back to staff email login"}
         </button>
+        {publicRegistrationEnabled && (
         <p className="text-sm text-muted-foreground">
           New Staff?{" "}
           <Link to="/register" className="font-medium text-primary transition-smooth hover:text-primary/80">
             Sign Up
           </Link>
         </p>
+        )}
         <p className="mt-1 text-xs text-muted-foreground">
           {portalSettings?.authorizedAccessText || "Authorized access only"}
         </p>

@@ -21,6 +21,8 @@ const defaultDepartments = ["SUSU", "SUSU AGENT"];
 export default function Register() {
   const [branches, setBranches] = useState(defaultBranches);
   const [departments, setDepartments] = useState(defaultDepartments);
+  const [publicRegistrationEnabled, setPublicRegistrationEnabled] = useState(false);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [step, setStep] = useState("form");
   const [form, setForm] = useState({
     fullname: "",
@@ -44,11 +46,18 @@ export default function Register() {
         if (!mounted) return;
         setBranches(settings.branches?.length ? settings.branches : defaultBranches);
         setDepartments(defaultDepartments);
+        setPublicRegistrationEnabled(settings.publicRegistrationEnabled === true);
+        setSettingsLoaded(true);
       })
       .catch(() => {
         if (!mounted) return;
         setBranches(defaultBranches);
         setDepartments(defaultDepartments);
+        setPublicRegistrationEnabled(false);
+        setSettingsLoaded(true);
+      })
+      .finally(() => {
+        if (mounted) setSettingsLoaded(true);
       });
     return () => {
       mounted = false;
@@ -114,6 +123,23 @@ export default function Register() {
       setError(err.message || "Failed to resend code.");
     }
   };
+
+  if (settingsLoaded && !publicRegistrationEnabled) {
+    return (
+      <AuthLayout className="max-w-[420px] px-5 py-12 text-center">
+        <div className="space-y-3">
+          <div className="page-kicker text-center">Registration closed</div>
+          <h1 className="font-display text-2xl font-bold text-foreground">Staff Sign-Up Disabled</h1>
+          <p className="text-sm leading-6 text-muted-foreground">
+            Public registration is currently turned off. A supervisor or owner admin must add new users from inside the portal.
+          </p>
+          <Button asChild className="mt-2 w-full glass-button">
+            <Link to="/login">Back to Login</Link>
+          </Button>
+        </div>
+      </AuthLayout>
+    );
+  }
 
   if (step === "verify") {
     return (
