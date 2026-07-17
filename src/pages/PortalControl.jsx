@@ -25,7 +25,7 @@ import {
   updatePortalSettings,
 } from "@/api/portalClient";
 import { useAuth } from "@/lib/AuthContext";
-import { Building2, Download, ListPlus, Plus, RotateCcw, Save, Settings2, Trash2, Upload, X } from "lucide-react";
+import { Building2, Download, ListPlus, Pencil, Plus, RotateCcw, Save, Settings2, Trash2, Upload, X } from "lucide-react";
 
 const listControls = [
   ["branches", "Branches", "Branch", "Add branch name", []],
@@ -71,21 +71,41 @@ function cleanList(values) {
 function ListEditor({ title, singular, items, placeholder, protectedItems = [], onChange }) {
   const [value, setValue] = useState("");
   const [open, setOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState("");
   const [itemError, setItemError] = useState("");
   const protectedSet = new Set((protectedItems || []).map((item) => String(item).trim().toUpperCase()));
 
-  const addItem = () => {
+  const openAddDialog = () => {
+    setEditingItem("");
+    setValue("");
+    setItemError("");
+    setOpen(true);
+  };
+
+  const openEditDialog = (item) => {
+    setEditingItem(item);
+    setValue(item);
+    setItemError("");
+    setOpen(true);
+  };
+
+  const saveItem = () => {
     const item = value.trim().toUpperCase();
     if (!item) {
       setItemError(`Enter a ${singular.toLowerCase()} name.`);
       return;
     }
-    if ((items || []).some((current) => current.toUpperCase() === item)) {
+    if ((items || []).some((current) => current.toUpperCase() === item && current !== editingItem)) {
       setItemError(`${item} already exists.`);
       return;
     }
-    onChange(cleanList([...(items || []), item]));
+    if (editingItem) {
+      onChange(cleanList((items || []).map((current) => (current === editingItem ? item : current))));
+    } else {
+      onChange(cleanList([...(items || []), item]));
+    }
     setValue("");
+    setEditingItem("");
     setItemError("");
     setOpen(false);
   };
@@ -105,7 +125,7 @@ function ListEditor({ title, singular, items, placeholder, protectedItems = [], 
           <h2 className="font-heading text-base font-bold text-foreground">{title}</h2>
           <Badge variant="secondary">{items?.length || 0}</Badge>
         </div>
-        <Button type="button" size="sm" className="gap-2" onClick={() => setOpen(true)}>
+        <Button type="button" size="sm" className="gap-2" onClick={openAddDialog}>
           <Plus className="h-4 w-4" />
           Add
         </Button>
@@ -117,26 +137,52 @@ function ListEditor({ title, singular, items, placeholder, protectedItems = [], 
               <Building2 className="h-4 w-4 shrink-0 text-blue-500" />
               <span className="break-words">{item}</span>
             </span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-              onClick={() => removeItem(item)}
-              disabled={(items || []).length <= 1 || protectedSet.has(String(item || "").trim().toUpperCase())}
-              title={protectedSet.has(String(item || "").trim().toUpperCase()) ? "Required department" : "Remove"}
-            >
-              <X className="h-4 w-4" />
-            </Button>
+            <div className="flex shrink-0 items-center gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-blue-600 hover:bg-blue-500/10 hover:text-blue-700"
+                onClick={() => openEditDialog(item)}
+                disabled={protectedSet.has(String(item || "").trim().toUpperCase())}
+                title={protectedSet.has(String(item || "").trim().toUpperCase()) ? "Required department" : `Edit ${item}`}
+              >
+                <Pencil className="h-4 w-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                onClick={() => removeItem(item)}
+                disabled={(items || []).length <= 1 || protectedSet.has(String(item || "").trim().toUpperCase())}
+                title={protectedSet.has(String(item || "").trim().toUpperCase()) ? "Required department" : "Remove"}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
         ))}
       </div>
-      <Dialog open={open} onOpenChange={setOpen}>
+      {itemError && !open && <p className="mt-3 text-sm text-destructive">{itemError}</p>}
+      <Dialog
+        open={open}
+        onOpenChange={(nextOpen) => {
+          setOpen(nextOpen);
+          if (!nextOpen) {
+            setEditingItem("");
+            setValue("");
+            setItemError("");
+          }
+        }}
+      >
         <DialogContent className="w-[calc(100vw-2rem)] max-w-[360px] rounded-xl p-5 sm:max-w-md sm:p-6">
           <DialogHeader>
-            <DialogTitle>Add {singular}</DialogTitle>
+            <DialogTitle>{editingItem ? `Edit ${singular}` : `Add ${singular}`}</DialogTitle>
             <DialogDescription>
-              This will be added to Portal Control. Press Save Changes after adding to apply it across the app.
+              {editingItem
+                ? `Rename ${editingItem}. Press Save Changes after editing to apply it across the app.`
+                : "This will be added to Portal Control. Press Save Changes after adding to apply it across the app."}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
@@ -148,7 +194,7 @@ function ListEditor({ title, singular, items, placeholder, protectedItems = [], 
                 setItemError("");
               }}
               onKeyDown={(event) => {
-                if (event.key === "Enter") addItem();
+                if (event.key === "Enter") saveItem();
               }}
               placeholder={placeholder}
               autoFocus
@@ -159,8 +205,8 @@ function ListEditor({ title, singular, items, placeholder, protectedItems = [], 
             <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button type="button" className="w-full sm:w-auto" onClick={addItem}>
-              Add
+            <Button type="button" className="w-full sm:w-auto" onClick={saveItem}>
+              {editingItem ? "Save" : "Add"}
             </Button>
           </DialogFooter>
         </DialogContent>
