@@ -68,11 +68,22 @@ function cleanList(values) {
     });
 }
 
-function ListEditor({ title, singular, items, placeholder, protectedItems = [], onChange, onRename }) {
+function ListEditor({
+  title,
+  singular,
+  items,
+  placeholder,
+  protectedItems = [],
+  backupReady = false,
+  onBackupRequired,
+  onChange,
+  onRename,
+}) {
   const [value, setValue] = useState("");
   const [open, setOpen] = useState(false);
   const [editingItem, setEditingItem] = useState("");
   const [itemError, setItemError] = useState("");
+  const [confirmAction, setConfirmAction] = useState(null);
   const protectedSet = new Set((protectedItems || []).map((item) => String(item).trim().toUpperCase()));
 
   const openAddDialog = () => {
@@ -87,6 +98,13 @@ function ListEditor({ title, singular, items, placeholder, protectedItems = [], 
     setValue(item);
     setItemError("");
     setOpen(true);
+  };
+
+  const resetEntryDialog = () => {
+    setEditingItem("");
+    setValue("");
+    setItemError("");
+    setOpen(false);
   };
 
   const saveItem = () => {
@@ -105,16 +123,18 @@ function ListEditor({ title, singular, items, placeholder, protectedItems = [], 
         return;
       }
       if (editingItem !== item) {
-        onRename?.(editingItem, item);
+        if (!backupReady) {
+          onBackupRequired?.(`${singular} rename needs a backup first. Export Backup, then try again.`);
+          return;
+        }
+        setConfirmAction({ type: "rename", from: editingItem, to: item });
+        return;
       }
       onChange(cleanList((items || []).map((current) => (current === editingItem ? item : current))));
     } else {
       onChange(cleanList([...(items || []), item]));
     }
-    setValue("");
-    setEditingItem("");
-    setItemError("");
-    setOpen(false);
+    resetEntryDialog();
   };
 
   const removeItem = (item) => {
@@ -122,7 +142,25 @@ function ListEditor({ title, singular, items, placeholder, protectedItems = [], 
       setItemError(`${item} cannot be removed because the agent workflow depends on it.`);
       return;
     }
-    onChange((items || []).filter((current) => current !== item));
+    if (!backupReady) {
+      onBackupRequired?.(`${singular} removal needs a backup first. Export Backup, then try again.`);
+      return;
+    }
+    setConfirmAction({ type: "delete", item });
+  };
+
+  const applyConfirmedAction = () => {
+    if (!confirmAction) return;
+    if (confirmAction.type === "rename") {
+      onRename?.(confirmAction.from, confirmAction.to);
+      onChange(cleanList((items || []).map((current) => (current === confirmAction.from ? confirmAction.to : current))));
+      resetEntryDialog();
+    }
+    if (confirmAction.type === "delete") {
+      onChange((items || []).filter((current) => current !== confirmAction.item));
+    }
+    setConfirmAction(null);
+    setItemError("");
   };
 
   return (
@@ -139,32 +177,34 @@ function ListEditor({ title, singular, items, placeholder, protectedItems = [], 
       </div>
       <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
         {(items || []).map((item) => (
-          <div key={item} className="flex items-center justify-between rounded-lg border border-border p-3">
+          <div key={item} className="flex flex-col gap-3 rounded-lg border border-border p-3 sm:flex-row sm:items-center sm:justify-between">
             <span className="flex min-w-0 items-center gap-2 text-sm font-medium text-foreground">
               <Building2 className="h-4 w-4 shrink-0 text-blue-500" />
               <span className="break-words">{item}</span>
             </span>
-            <div className="flex shrink-0 items-center gap-1">
+            <div className="grid grid-cols-2 gap-2 sm:flex sm:shrink-0 sm:items-center sm:gap-1">
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="text-blue-600 hover:bg-blue-500/10 hover:text-blue-700"
+                className="gap-1 px-2 text-xs text-blue-600 hover:bg-blue-500/10 hover:text-blue-700"
                 onClick={() => openEditDialog(item)}
                 title={`Edit ${item}`}
               >
                 <Pencil className="h-4 w-4" />
+                <span>Edit</span>
               </Button>
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                className="gap-1 px-2 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
                 onClick={() => removeItem(item)}
                 disabled={(items || []).length <= 1}
                 title="Remove"
               >
                 <X className="h-4 w-4" />
+                <span>Remove</span>
               </Button>
             </div>
           </div>
@@ -213,6 +253,29 @@ function ListEditor({ title, singular, items, placeholder, protectedItems = [], 
             </Button>
             <Button type="button" className="w-full sm:w-auto" onClick={saveItem}>
               {editingItem ? "Save" : "Add"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={Boolean(confirmAction)} onOpenChange={(nextOpen) => !nextOpen && setConfirmAction(null)}>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-[380px] rounded-xl p-5 sm:p-6">
+          <DialogHeader>
+            <DialogTitle>{confirmAction?.type === "rename" ? `Rename ${singular}?` : `Remove ${singular}?`}</DialogTitle>
+            <DialogDescription>
+              {confirmAction?.type === "rename"
+                ? `This will change ${confirmAction.from} to ${confirmAction.to} across the portal after you press Save Changes.`
+                : `This will remove ${confirmAction?.item} from Portal Control after you press Save Changes.`}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
+            A backup has been exported for this session. Review carefully before continuing.
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={() => setConfirmAction(null)}>
+              Cancel
+            </Button>
+            <Button type="button" className="w-full sm:w-auto" onClick={applyConfirmedAction}>
+              Continue
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -267,6 +330,17 @@ export default function PortalControl() {
     setDraft((current) => ({ ...current, [key]: value }));
   };
 
+
+  const hasDangerousListChanges = () => {
+    const currentBranches = cleanList(settings?.branches || []);
+    const nextBranches = cleanList(draft?.branches || []);
+    const currentDepartments = cleanList(settings?.departments || []);
+    const nextDepartments = cleanList(draft?.departments || []);
+    const branchRemoved = currentBranches.some((item) => !nextBranches.includes(item));
+    const departmentRemoved = currentDepartments.some((item) => !nextDepartments.includes(item));
+    const hasRenames = Object.keys(pendingRenames.branches || {}).length > 0 || Object.keys(pendingRenames.departments || {}).length > 0;
+    return branchRemoved || departmentRemoved || hasRenames;
+  };
   const recordRename = (key, from, to) => {
     const oldValue = String(from || "").trim().toUpperCase();
     const newValue = String(to || "").trim().toUpperCase();
@@ -291,6 +365,10 @@ export default function PortalControl() {
     const password = getStoredPortalControlPassword();
     if (!password) {
       setError("Open Portal Control from the sidebar and enter the password first.");
+      return;
+    }
+    if (hasDangerousListChanges() && !clearBackupReady) {
+      setError("Export Backup before renaming or removing any branch or department.");
       return;
     }
     if ((settings?.appMode || "test") !== "live" && draft.appMode === "live" && !clearBackupReady) {
@@ -612,6 +690,26 @@ export default function PortalControl() {
       </section>
 
       <section className="rounded-xl border border-border bg-card p-5">
+        <h2 className="font-heading text-base font-bold text-foreground">Post-Deploy Smoke Test</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Run these checks after every Render or cPanel deployment before using real records.
+        </p>
+        <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+          {[
+            "Login with owner, supervisor, and SUSU agent",
+            "Edit a staff branch in Directory",
+            "Add or import a customer",
+            "Record an agent collection",
+            "Export reports to Excel/PDF",
+            "Save Portal Control settings",
+          ].map((item) => (
+            <div key={item} className="rounded-lg border border-border bg-background/60 px-3 py-2 text-sm text-foreground">
+              {item}
+            </div>
+          ))}
+        </div>
+      </section>
+      <section className="rounded-xl border border-border bg-card p-5">
         <h2 className="mb-4 font-heading text-lg font-bold text-foreground">Brand, Login, and Access</h2>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {textFields.map(([key, label]) => (
@@ -668,6 +766,8 @@ export default function PortalControl() {
             placeholder={placeholder}
             protectedItems={protectedItems}
             items={draft[key] || []}
+            backupReady={clearBackupReady}
+            onBackupRequired={(message) => setError(message)}
             onChange={(items) => update(key, items)}
             onRename={(from, to) => recordRename(key, from, to)}
           />

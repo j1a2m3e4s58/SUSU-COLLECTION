@@ -1470,6 +1470,15 @@ def apply_portal_renames(branch_renames: dict[str, str], department_renames: dic
     return summary
 
 
+def portal_list_changes(previous_values: object, next_values: object) -> dict[str, list[str]]:
+    previous = normalize_portal_list(previous_values, [], True)
+    current = normalize_portal_list(next_values, [], True)
+    previous_set = set(previous)
+    current_set = set(current)
+    return {
+        "added": [item for item in current if item not in previous_set],
+        "removed": [item for item in previous if item not in current_set],
+    }
 def normalize_email_domain(value) -> str:
     domain = str(value or "").strip().lower()
     if not domain:
@@ -3130,6 +3139,8 @@ def update_portal_settings():
         and "SUSU" not in department_renames
     ):
         department_renames["SUSU"] = "SUSU SUPERVISOR"
+    branch_changes = portal_list_changes(current_settings.get("branches", []), branches)
+    department_changes = portal_list_changes(current_settings.get("departments", []), departments)
     rename_summary = apply_portal_renames(branch_renames, department_renames)
     settings = {
         "bankName": str(data.get("bankName") or DEFAULT_PORTAL_SETTINGS["bankName"]).strip(),
@@ -3179,6 +3190,8 @@ def update_portal_settings():
             "departments": settings["departments"],
             "branchRenames": branch_renames,
             "departmentRenames": department_renames,
+            "branchChanges": branch_changes,
+            "departmentChanges": department_changes,
             "renamedRecords": rename_summary,
             "emailDomain": settings["emailDomain"],
             "appMode": settings["appMode"],
