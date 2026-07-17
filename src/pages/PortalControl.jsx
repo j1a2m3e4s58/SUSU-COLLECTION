@@ -73,7 +73,6 @@ function ListEditor({ title, singular, items, placeholder, protectedItems = [], 
   const [open, setOpen] = useState(false);
   const [editingItem, setEditingItem] = useState("");
   const [itemError, setItemError] = useState("");
-  const protectedSet = new Set((protectedItems || []).map((item) => String(item).trim().toUpperCase()));
 
   const openAddDialog = () => {
     setEditingItem("");
@@ -111,10 +110,6 @@ function ListEditor({ title, singular, items, placeholder, protectedItems = [], 
   };
 
   const removeItem = (item) => {
-    if (protectedSet.has(String(item || "").trim().toUpperCase())) {
-      setItemError(`${item} is required by the SUSU workflow and cannot be deleted.`);
-      return;
-    }
     onChange((items || []).filter((current) => current !== item));
   };
 
@@ -144,8 +139,7 @@ function ListEditor({ title, singular, items, placeholder, protectedItems = [], 
                 size="sm"
                 className="text-blue-600 hover:bg-blue-500/10 hover:text-blue-700"
                 onClick={() => openEditDialog(item)}
-                disabled={protectedSet.has(String(item || "").trim().toUpperCase())}
-                title={protectedSet.has(String(item || "").trim().toUpperCase()) ? "Required department" : `Edit ${item}`}
+                title={`Edit ${item}`}
               >
                 <Pencil className="h-4 w-4" />
               </Button>
@@ -155,8 +149,8 @@ function ListEditor({ title, singular, items, placeholder, protectedItems = [], 
                 size="sm"
                 className="text-destructive hover:bg-destructive/10 hover:text-destructive"
                 onClick={() => removeItem(item)}
-                disabled={(items || []).length <= 1 || protectedSet.has(String(item || "").trim().toUpperCase())}
-                title={protectedSet.has(String(item || "").trim().toUpperCase()) ? "Required department" : "Remove"}
+                disabled={(items || []).length <= 1}
+                title="Remove"
               >
                 <X className="h-4 w-4" />
               </Button>
