@@ -68,6 +68,7 @@ DEFAULT_PORTAL_DEPARTMENTS = [
     "SUSU",
     "SUSU AGENT",
 ]
+REQUIRED_PORTAL_DEPARTMENTS = ["SUSU AGENT"]
 SUSU_DEPARTMENTS = {"SUSU", "SUSU AGENT"}
 DEFAULT_PORTAL_SETTINGS = {
     "bankName": "Bawjiase Community Bank PLC",
@@ -1336,6 +1337,139 @@ def merge_missing_portal_defaults(values: list[str], defaults: list[str], upperc
     return items
 
 
+def normalize_portal_departments(values) -> list[str]:
+    departments = normalize_portal_list(values, DEFAULT_PORTAL_DEPARTMENTS, True)
+    seen = {str(item).strip().upper() for item in departments}
+    for value in REQUIRED_PORTAL_DEPARTMENTS:
+        item = str(value or "").strip().upper()
+        if item and item not in seen:
+            departments.append(item)
+            seen.add(item)
+    return departments
+
+
+def normalize_portal_rename_map(value: object) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    renames: dict[str, str] = {}
+    for old_value, new_value in value.items():
+        old_item = str(old_value or "").strip().upper()
+        new_item = str(new_value or "").strip().upper()
+        if old_item and new_item and old_item != new_item:
+            renames[old_item] = new_item
+    return renames
+
+
+def rename_scoped_values(values: object, renames: dict[str, str]) -> list[str]:
+    normalized = normalize_scope_list(values, empty_default=[])
+    updated = []
+    seen = set()
+    for value in normalized:
+        key = str(value or "").strip().upper()
+        item = renames.get(key, key)
+        if item and item not in seen:
+            updated.append(item)
+            seen.add(item)
+    return updated
+
+
+def rename_managed_department_map(value: object, branch_renames: dict[str, str], department_renames: dict[str, str]) -> dict[str, list[str]]:
+    current = normalize_managed_departments_by_branch(value)
+    updated: dict[str, list[str]] = {}
+    for branch, departments in current.items():
+        branch_key = branch_renames.get(str(branch or "").strip().upper(), str(branch or "").strip().upper())
+        department_values = rename_scoped_values(departments, department_renames)
+        if branch_key and department_values:
+            updated[branch_key] = department_values
+    return updated
+
+
+def rename_item_fields(item: dict, renames: dict[str, str], field_names: list[str]) -> bool:
+    changed = False
+    for field in field_names:
+        value = str(item.get(field, "") or "").strip().upper()
+        if value in renames:
+            item[field] = renames[value]
+            changed = True
+    return changed
+
+
+def rename_scope_fields(item: dict, branch_renames: dict[str, str], department_renames: dict[str, str]) -> bool:
+    changed = False
+    if "branchScope" in item:
+        next_scope = rename_scoped_values(item.get("branchScope"), branch_renames)
+        if next_scope != item.get("branchScope"):
+            item["branchScope"] = next_scope
+            changed = True
+    if "departmentScope" in item:
+        next_scope = rename_scoped_values(item.get("departmentScope"), department_renames)
+        if next_scope != item.get("departmentScope"):
+            item["departmentScope"] = next_scope
+            changed = True
+    return changed
+
+
+def apply_portal_renames(branch_renames: dict[str, str], department_renames: dict[str, str]) -> dict[str, int]:
+    summary = {"users": 0, "customers": 0, "customerImports": 0, "collections": 0, "dailyCloses": 0, "content": 0}
+    if not branch_renames and not department_renames:
+        return summary
+
+    users = load_user_store()
+    users_changed = False
+    for user in users:
+        changed = rename_item_fields(user, branch_renames, ["branch"])
+        changed = rename_item_fields(user, department_renames, ["department"]) or changed
+        next_managed_branches = rename_scoped_values(user.get("managedBranches"), branch_renames)
+        if next_managed_branches != user.get("managedBranches"):
+            user["managedBranches"] = next_managed_branches
+            changed = True
+        next_managed_departments = rename_managed_department_map(
+            user.get("managedDepartmentsByBranch"),
+            branch_renames,
+            department_renames,
+        )
+        if next_managed_departments != normalize_managed_departments_by_branch(user.get("managedDepartmentsByBranch")):
+            user["managedDepartmentsByBranch"] = next_managed_departments
+            changed = True
+        if changed:
+            summary["users"] += 1
+            users_changed = True
+    if users_changed:
+        save_user_store(users)
+
+    simple_stores = [
+        (CUSTOMERS_STORE_PATH, "customers", ["branch", "branch_name", "branch_id"]),
+        (CUSTOMER_IMPORTS_STORE_PATH, "customerImports", ["branch", "branch_name", "branch_id"]),
+        (COLLECTIONS_STORE_PATH, "collections", ["branch", "branch_name", "branch_id", "agent_branch", "customer_branch"]),
+        (DAILY_CLOSES_STORE_PATH, "dailyCloses", ["branch", "branch_name", "branch_id"]),
+    ]
+    for path, summary_key, branch_fields in simple_stores:
+        items = load_json_list_store(path)
+        changed_count = 0
+        for item in items:
+            if rename_item_fields(item, branch_renames, branch_fields):
+                changed_count += 1
+        if changed_count:
+            save_json_list_store(path, items)
+            summary[summary_key] = changed_count
+
+    content_stores = [ANNOUNCEMENTS_STORE_PATH, FORMS_STORE_PATH, TRAINING_VIDEOS_STORE_PATH, TRAINING_DOCUMENTS_STORE_PATH]
+    content_count = 0
+    for path in content_stores:
+        items = load_json_list_store(path)
+        changed_count = 0
+        for item in items:
+            changed = rename_item_fields(item, department_renames, ["department"])
+            changed = rename_scope_fields(item, branch_renames, department_renames) or changed
+            if changed:
+                changed_count += 1
+        if changed_count:
+            save_json_list_store(path, items)
+            content_count += changed_count
+    summary["content"] = content_count
+    return summary
+
+
 def normalize_email_domain(value) -> str:
     domain = str(value or "").strip().lower()
     if not domain:
@@ -1364,7 +1498,7 @@ def load_portal_settings_store() -> dict:
         "portalName": str(raw.get("portalName") or DEFAULT_PORTAL_SETTINGS["portalName"]).strip(),
         "emailDomain": normalize_email_domain(raw.get("emailDomain")),
         "branches": normalize_portal_branches(raw.get("branches")),
-        "departments": merge_missing_portal_defaults(raw.get("departments"), DEFAULT_PORTAL_DEPARTMENTS, True),
+        "departments": normalize_portal_departments(raw.get("departments")),
         "formCategories": [],
         "trainingCategories": [],
         "departmentChangeTypes": [],
@@ -2970,7 +3104,33 @@ def update_portal_settings():
         return jsonify({"error": "Portal control password is incorrect"}), 403
     current_settings = load_portal_settings_store()
     branches = normalize_portal_branches(data.get("branches"))
-    departments = merge_missing_portal_defaults(data.get("departments"), DEFAULT_PORTAL_DEPARTMENTS, True)
+    departments = normalize_portal_departments(data.get("departments"))
+    branch_renames = normalize_portal_rename_map(data.get("branchRenames"))
+    department_renames = normalize_portal_rename_map(data.get("departmentRenames"))
+    if "SUSU AGENT" in department_renames:
+        return jsonify({"error": "SUSU AGENT cannot be renamed because agent login and deposit rules depend on it."}), 400
+    branch_renames = {
+        old_value: new_value
+        for old_value, new_value in branch_renames.items()
+        if old_value in {str(item).strip().upper() for item in current_settings.get("branches", [])}
+        and new_value in {str(item).strip().upper() for item in branches}
+    }
+    department_renames = {
+        old_value: new_value
+        for old_value, new_value in department_renames.items()
+        if old_value in {str(item).strip().upper() for item in current_settings.get("departments", [])}
+        and new_value in {str(item).strip().upper() for item in departments}
+    }
+    current_department_set = {str(item).strip().upper() for item in current_settings.get("departments", [])}
+    next_department_set = {str(item).strip().upper() for item in departments}
+    if (
+        "SUSU" in current_department_set
+        and "SUSU" not in next_department_set
+        and "SUSU SUPERVISOR" in next_department_set
+        and "SUSU" not in department_renames
+    ):
+        department_renames["SUSU"] = "SUSU SUPERVISOR"
+    rename_summary = apply_portal_renames(branch_renames, department_renames)
     settings = {
         "bankName": str(data.get("bankName") or DEFAULT_PORTAL_SETTINGS["bankName"]).strip(),
         "shortBankName": str(data.get("shortBankName") or DEFAULT_PORTAL_SETTINGS["shortBankName"]).strip(),
@@ -3017,6 +3177,9 @@ def update_portal_settings():
         {
             "branches": branches,
             "departments": settings["departments"],
+            "branchRenames": branch_renames,
+            "departmentRenames": department_renames,
+            "renamedRecords": rename_summary,
             "emailDomain": settings["emailDomain"],
             "appMode": settings["appMode"],
             "updatedAt": settings["updatedAt"],
@@ -3025,7 +3188,7 @@ def update_portal_settings():
     notify_active_managers(
         kind="portal_control",
         title="Portal settings updated",
-        message=f"{auth_user['fullname']} updated portal branches, SUSU categories, labels, or access settings.",
+        message=f"{auth_user['fullname']} updated portal branches, departments, labels, or access settings.",
         link_to="/portal-control",
     )
     return jsonify({"ok": True, "settings": public_portal_settings(settings)})
@@ -3129,7 +3292,7 @@ def import_production_backup():
                 imported_settings.pop("portalControlPassword", None)
                 imported_settings.pop("itAccessCode", None)
                 imported_settings.pop("hrAccessCode", None)
-                imported_settings["departments"] = merge_missing_portal_defaults(imported_settings.get("departments"), DEFAULT_PORTAL_DEPARTMENTS, True)
+                imported_settings["departments"] = normalize_portal_departments(imported_settings.get("departments"))
                 imported_settings["portalControlPassword"] = ""
                 imported_settings["itAccessCode"] = ""
                 imported_settings["hrAccessCode"] = ""

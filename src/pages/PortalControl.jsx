@@ -29,7 +29,7 @@ import { Building2, Download, ListPlus, Pencil, Plus, RotateCcw, Save, Settings2
 
 const listControls = [
   ["branches", "Branches", "Branch", "Add branch name", []],
-  ["departments", "Departments", "Department", "Add department name", ["SUSU", "SUSU AGENT"]],
+  ["departments", "Departments", "Department", "Add department name", ["SUSU AGENT"]],
 ];
 
 const textFields = [
@@ -68,11 +68,12 @@ function cleanList(values) {
     });
 }
 
-function ListEditor({ title, singular, items, placeholder, protectedItems = [], onChange }) {
+function ListEditor({ title, singular, items, placeholder, protectedItems = [], onChange, onRename }) {
   const [value, setValue] = useState("");
   const [open, setOpen] = useState(false);
   const [editingItem, setEditingItem] = useState("");
   const [itemError, setItemError] = useState("");
+  const protectedSet = new Set((protectedItems || []).map((item) => String(item).trim().toUpperCase()));
 
   const openAddDialog = () => {
     setEditingItem("");
@@ -99,6 +100,13 @@ function ListEditor({ title, singular, items, placeholder, protectedItems = [], 
       return;
     }
     if (editingItem) {
+      if (protectedSet.has(String(editingItem || "").trim().toUpperCase())) {
+        setItemError(`${editingItem} cannot be renamed because the agent workflow depends on it.`);
+        return;
+      }
+      if (editingItem !== item) {
+        onRename?.(editingItem, item);
+      }
       onChange(cleanList((items || []).map((current) => (current === editingItem ? item : current))));
     } else {
       onChange(cleanList([...(items || []), item]));
@@ -110,6 +118,10 @@ function ListEditor({ title, singular, items, placeholder, protectedItems = [], 
   };
 
   const removeItem = (item) => {
+    if (protectedSet.has(String(item || "").trim().toUpperCase())) {
+      setItemError(`${item} cannot be removed because the agent workflow depends on it.`);
+      return;
+    }
     onChange((items || []).filter((current) => current !== item));
   };
 
@@ -213,6 +225,7 @@ export default function PortalControl() {
   const { refreshPortalSettings } = useAuth();
   const [settings, setSettings] = useState(null);
   const [draft, setDraft] = useState(null);
+  const [pendingRenames, setPendingRenames] = useState({ branches: {}, departments: {} });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -235,6 +248,7 @@ export default function PortalControl() {
         if (!mounted) return;
         setSettings(data);
         setDraft(data);
+        setPendingRenames({ branches: {}, departments: {} });
         setProductionStatus(status);
         setError("");
       })
@@ -251,6 +265,26 @@ export default function PortalControl() {
 
   const update = (key, value) => {
     setDraft((current) => ({ ...current, [key]: value }));
+  };
+
+  const recordRename = (key, from, to) => {
+    const oldValue = String(from || "").trim().toUpperCase();
+    const newValue = String(to || "").trim().toUpperCase();
+    if (!oldValue || !newValue || oldValue === newValue) return;
+    setPendingRenames((current) => {
+      const nextGroup = { ...(current[key] || {}) };
+      const existingOriginal = Object.keys(nextGroup).find((item) => nextGroup[item] === oldValue);
+      if (existingOriginal) {
+        if (existingOriginal === newValue) {
+          delete nextGroup[existingOriginal];
+        } else {
+          nextGroup[existingOriginal] = newValue;
+        }
+      } else {
+        nextGroup[oldValue] = newValue;
+      }
+      return { ...current, [key]: nextGroup };
+    });
   };
 
   const saveSettings = async () => {
@@ -284,6 +318,8 @@ export default function PortalControl() {
       ...draft,
       branches: cleanList(draft.branches),
       departments: cleanList(draft.departments),
+      branchRenames: pendingRenames.branches,
+      departmentRenames: pendingRenames.departments,
       formCategories: [],
       trainingCategories: [],
       departmentChangeTypes: [],
@@ -299,6 +335,7 @@ export default function PortalControl() {
       const updated = await updatePortalSettings(payload, password);
       setSettings(updated);
       setDraft(updated);
+      setPendingRenames({ branches: {}, departments: {} });
       await refreshPortalSettings?.();
       setSuccess("SUSU system settings saved. Branches and departments now apply across registration, directory, branches, reports, and the app shell.");
     } catch (err) {
@@ -312,6 +349,7 @@ export default function PortalControl() {
 
   const resetDraft = () => {
     setDraft(settings);
+    setPendingRenames({ branches: {}, departments: {} });
     setError("");
     setSuccess("Unsaved changes have been reset.");
   };
@@ -351,6 +389,7 @@ export default function PortalControl() {
       if (response.settings) {
         setSettings(response.settings);
         setDraft(response.settings);
+        setPendingRenames({ branches: {}, departments: {} });
       }
       await refreshPortalSettings?.();
       setSuccess("Backup imported successfully. Refresh other open tabs before continuing.");
@@ -630,6 +669,7 @@ export default function PortalControl() {
             protectedItems={protectedItems}
             items={draft[key] || []}
             onChange={(items) => update(key, items)}
+            onRename={(from, to) => recordRename(key, from, to)}
           />
         ))}
       </div>
