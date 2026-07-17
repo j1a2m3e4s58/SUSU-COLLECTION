@@ -4106,6 +4106,18 @@ def update_staff(user_id: str):
         user["managedDepartmentsByBranch"] = normalize_managed_departments_by_branch(
             data.get("managedDepartmentsByBranch")
         )
+    if owner_actor and user["role"] == "Supervisor" and "managedBranches" not in data:
+        supervisor_branch = str(user.get("branch") or "").strip().upper()
+        if supervisor_branch:
+            previous_managed_departments = normalize_managed_departments_by_branch(
+                user.get("managedDepartmentsByBranch")
+            )
+            carried_scope = previous_managed_departments.get(supervisor_branch)
+            if not carried_scope and previous_managed_departments:
+                carried_scope = next(iter(previous_managed_departments.values()))
+            user["managedBranches"] = [supervisor_branch]
+            if "managedDepartmentsByBranch" not in data:
+                user["managedDepartmentsByBranch"] = {supervisor_branch: carried_scope or ["ALL"]}
     if owner_actor and user["role"] != "Supervisor":
         user["managedBranches"] = normalize_scope_list(
             user.get("managedBranches"),
