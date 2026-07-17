@@ -122,7 +122,7 @@ export default function Profile() {
         ]);
         if (!mounted) return;
         setBranches(settings.branches || []);
-        setDepartments(["SUSU", "SUSU AGENT"]);
+        setDepartments(settings.departments?.length ? settings.departments : ["SUSU", "SUSU AGENT"]);
         if (profile) updateUser(profile);
       } catch {
         // Keep local session profile if refresh fails.
@@ -359,7 +359,7 @@ export default function Profile() {
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  SUSU Category
+                  Department
                   </label>
                   <ControlledSelect
                     value={form.department}
@@ -387,7 +387,7 @@ export default function Profile() {
             <div className="space-y-1">
               <InfoRow icon={<Mail className="h-4 w-4" />} label="Email" value={user.email} />
               <InfoRow icon={<Phone className="h-4 w-4" />} label="Phone" value={user.phone} />
-              <InfoRow icon={<Building2 className="h-4 w-4" />} label="SUSU Category" value={user.department} />
+              <InfoRow icon={<Building2 className="h-4 w-4" />} label="Department" value={user.department} />
               <InfoRow icon={<MapPin className="h-4 w-4" />} label="Branch" value={user.branch} />
             </div>
           )}

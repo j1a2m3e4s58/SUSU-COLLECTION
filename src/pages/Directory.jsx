@@ -92,7 +92,7 @@ function EditStaffDialog({ staff, branches, departments, open, onOpenChange, onS
         <DialogHeader>
           <DialogTitle>Update Staff Details</DialogTitle>
           <DialogDescription>
-            Update position, branch, or SUSU category for {staff?.fullname}.
+            Update position, branch, or department for {staff?.fullname}.
           </DialogDescription>
         </DialogHeader>
 
@@ -119,12 +119,12 @@ function EditStaffDialog({ staff, branches, departments, open, onOpenChange, onS
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="edit-department">SUSU Category</Label>
+            <Label htmlFor="edit-department">Department</Label>
             <ControlledSelect
               value={department}
               onChange={setDepartment}
               options={departments}
-              placeholder="Select SUSU category"
+              placeholder="Select department"
               className="h-10 rounded-lg border-border bg-background text-sm"
             />
           </div>
@@ -181,7 +181,7 @@ export default function Directory() {
         const [settings, users] = await Promise.all([getPortalSettings(), getActiveStaff()]);
         if (!mounted) return;
         setBranches(settings.branches || []);
-        setDepartments(["SUSU", "SUSU AGENT"]);
+        setDepartments(settings.departments?.length ? settings.departments : ["SUSU", "SUSU AGENT"]);
         setStaff((users || []).filter((member) => member.role !== "OwnerAdmin"));
         setError("");
       } catch (err) {
@@ -422,7 +422,7 @@ export default function Directory() {
           <Input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search name, phone, email, SUSU category, branch..."
+            placeholder="Search name, phone, email, department, branch..."
             className="pl-10"
           />
         </div>

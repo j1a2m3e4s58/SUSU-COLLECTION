@@ -28,7 +28,8 @@ import { useAuth } from "@/lib/AuthContext";
 import { Building2, Download, ListPlus, Plus, RotateCcw, Save, Settings2, Trash2, Upload, X } from "lucide-react";
 
 const listControls = [
-  ["branches", "Branches", "Branch", "Add branch name"],
+  ["branches", "Branches", "Branch", "Add branch name", []],
+  ["departments", "Departments", "Department", "Add department name", ["SUSU", "SUSU AGENT"]],
 ];
 
 const textFields = [
@@ -67,10 +68,11 @@ function cleanList(values) {
     });
 }
 
-function ListEditor({ title, singular, items, placeholder, onChange }) {
+function ListEditor({ title, singular, items, placeholder, protectedItems = [], onChange }) {
   const [value, setValue] = useState("");
   const [open, setOpen] = useState(false);
   const [itemError, setItemError] = useState("");
+  const protectedSet = new Set((protectedItems || []).map((item) => String(item).trim().toUpperCase()));
 
   const addItem = () => {
     const item = value.trim().toUpperCase();
@@ -89,6 +91,10 @@ function ListEditor({ title, singular, items, placeholder, onChange }) {
   };
 
   const removeItem = (item) => {
+    if (protectedSet.has(String(item || "").trim().toUpperCase())) {
+      setItemError(`${item} is required by the SUSU workflow and cannot be deleted.`);
+      return;
+    }
     onChange((items || []).filter((current) => current !== item));
   };
 
@@ -117,7 +123,8 @@ function ListEditor({ title, singular, items, placeholder, onChange }) {
               size="sm"
               className="text-destructive hover:bg-destructive/10 hover:text-destructive"
               onClick={() => removeItem(item)}
-              disabled={(items || []).length <= 1}
+              disabled={(items || []).length <= 1 || protectedSet.has(String(item || "").trim().toUpperCase())}
+              title={protectedSet.has(String(item || "").trim().toUpperCase()) ? "Required department" : "Remove"}
             >
               <X className="h-4 w-4" />
             </Button>
@@ -236,7 +243,7 @@ export default function PortalControl() {
     const payload = {
       ...draft,
       branches: cleanList(draft.branches),
-      departments: ["SUSU", "SUSU AGENT"],
+      departments: cleanList(draft.departments),
       formCategories: [],
       trainingCategories: [],
       departmentChangeTypes: [],
@@ -253,7 +260,7 @@ export default function PortalControl() {
       setSettings(updated);
       setDraft(updated);
       await refreshPortalSettings?.();
-      setSuccess("SUSU system settings saved. Branches now apply across registration, directory, branches, reports, and the app shell.");
+      setSuccess("SUSU system settings saved. Branches and departments now apply across registration, directory, branches, reports, and the app shell.");
     } catch (err) {
       setError(err.message || "Could not save portal settings");
     } finally {
@@ -574,12 +581,13 @@ export default function PortalControl() {
       </section>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        {listControls.map(([key, title, singular, placeholder]) => (
+        {listControls.map(([key, title, singular, placeholder, protectedItems]) => (
           <ListEditor
             key={key}
             title={title}
             singular={singular}
             placeholder={placeholder}
+            protectedItems={protectedItems}
             items={draft[key] || []}
             onChange={(items) => update(key, items)}
           />

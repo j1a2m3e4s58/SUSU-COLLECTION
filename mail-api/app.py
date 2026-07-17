@@ -498,7 +498,7 @@ def normalize_visibility_and_department(data: dict) -> tuple[str, str | None]:
         raise ValueError("Visibility must be General or Department")
     department = str(data.get("department", "") or "").strip().upper() or None
     if visibility == "Department" and not department:
-        raise ValueError("SUSU category is required for category visibility")
+        raise ValueError("Department is required for department visibility")
     if visibility == "General":
         department = None
     return visibility, department
@@ -845,9 +845,11 @@ def normalize_portal_branch_name(value: object) -> str:
 def normalize_portal_department_name(value: object) -> str:
     department = str(value or "").strip().upper()
     if not department:
-        raise ValueError("SUSU category is required")
-    if department not in SUSU_DEPARTMENTS:
-        raise ValueError("SUSU category must be SUSU or SUSU AGENT")
+        raise ValueError("Department is required")
+    settings = load_portal_settings_store()
+    valid = {str(item).strip().upper() for item in settings.get("departments", [])}
+    if valid and department not in valid:
+        raise ValueError("Department must be selected from Portal Control")
     return department
 
 
@@ -985,7 +987,7 @@ def normalize_user(raw: dict) -> dict:
     else:
         email = validate_email(raw_email)
     department = str(raw.get("department", "")).strip().upper()
-    if department not in SUSU_DEPARTMENTS:
+    if not department:
         department = "SUSU AGENT"
     branch = str(raw.get("branch", "")).strip().upper()
     role = str(raw.get("role", role_from_department(department))).strip() or role_from_department(department)
@@ -1362,7 +1364,7 @@ def load_portal_settings_store() -> dict:
         "portalName": str(raw.get("portalName") or DEFAULT_PORTAL_SETTINGS["portalName"]).strip(),
         "emailDomain": normalize_email_domain(raw.get("emailDomain")),
         "branches": normalize_portal_branches(raw.get("branches")),
-        "departments": DEFAULT_PORTAL_DEPARTMENTS,
+        "departments": merge_missing_portal_defaults(raw.get("departments"), DEFAULT_PORTAL_DEPARTMENTS, True),
         "formCategories": [],
         "trainingCategories": [],
         "departmentChangeTypes": [],
@@ -2067,8 +2069,8 @@ def manageable_scope_message(user: dict) -> str:
     parts = []
     for branch in managed_branches:
         departments = managed_departments.get(branch, [])
-        label = "all SUSU categories" if "ALL" in departments else ", ".join(departments)
-        parts.append(f"{branch} > {label or 'no SUSU category'}")
+        label = "all departments" if "ALL" in departments else ", ".join(departments)
+        parts.append(f"{branch} > {label or 'no department'}")
     return f"You can only manage: {'; '.join(parts)}."
 
 
@@ -2968,13 +2970,14 @@ def update_portal_settings():
         return jsonify({"error": "Portal control password is incorrect"}), 403
     current_settings = load_portal_settings_store()
     branches = normalize_portal_branches(data.get("branches"))
+    departments = merge_missing_portal_defaults(data.get("departments"), DEFAULT_PORTAL_DEPARTMENTS, True)
     settings = {
         "bankName": str(data.get("bankName") or DEFAULT_PORTAL_SETTINGS["bankName"]).strip(),
         "shortBankName": str(data.get("shortBankName") or DEFAULT_PORTAL_SETTINGS["shortBankName"]).strip(),
         "portalName": str(data.get("portalName") or DEFAULT_PORTAL_SETTINGS["portalName"]).strip(),
         "emailDomain": normalize_email_domain(data.get("emailDomain")),
         "branches": branches,
-        "departments": DEFAULT_PORTAL_DEPARTMENTS,
+        "departments": departments,
         "formCategories": [],
         "trainingCategories": [],
         "departmentChangeTypes": [],
@@ -3126,7 +3129,7 @@ def import_production_backup():
                 imported_settings.pop("portalControlPassword", None)
                 imported_settings.pop("itAccessCode", None)
                 imported_settings.pop("hrAccessCode", None)
-                imported_settings["departments"] = DEFAULT_PORTAL_DEPARTMENTS
+                imported_settings["departments"] = merge_missing_portal_defaults(imported_settings.get("departments"), DEFAULT_PORTAL_DEPARTMENTS, True)
                 imported_settings["portalControlPassword"] = ""
                 imported_settings["itAccessCode"] = ""
                 imported_settings["hrAccessCode"] = ""
@@ -4413,7 +4416,7 @@ def auth_register():
         if len(password) < 8:
             return jsonify({"error": "Password must be at least 8 characters"}), 400
         if not department or not branch:
-            return jsonify({"error": "SUSU category and branch are required"}), 400
+            return jsonify({"error": "Department and branch are required"}), 400
         if department == "SUSU AGENT":
             return jsonify({"error": "SUSU AGENT accounts must be created by a supervisor or owner admin before they can collect deposits."}), 403
         users = load_user_store()

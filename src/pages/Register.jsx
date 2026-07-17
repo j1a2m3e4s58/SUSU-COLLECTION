@@ -45,7 +45,7 @@ export default function Register() {
       .then((settings) => {
         if (!mounted) return;
         setBranches(settings.branches?.length ? settings.branches : defaultBranches);
-        setDepartments(defaultDepartments);
+        setDepartments(settings.departments?.length ? settings.departments : defaultDepartments);
         setPublicRegistrationEnabled(settings.publicRegistrationEnabled === true);
         setSettingsLoaded(true);
       })
@@ -277,7 +277,7 @@ export default function Register() {
           </div>
           <div className="min-w-0 space-y-1">
             <Label className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
-              SUSU Category
+              Department
             </Label>
             <ControlledSelect
               value={form.department}
