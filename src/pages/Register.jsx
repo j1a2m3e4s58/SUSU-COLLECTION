@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 
 const defaultBranches = ["HEAD OFFICE", "BAWJIASE", "ADEISO", "OFAAKOR", "KASOA NEW MARKET", "KASOA MAIN"];
-const defaultDepartments = ["SUSU", "SUSU AGENT"];
+const defaultDepartments = ["SUSU"];
 
 export default function Register() {
   const [branches, setBranches] = useState(defaultBranches);

@@ -30,7 +30,7 @@ export default function FieldCollection() {
     return () => clearInterval(timer);
   }, []);
 
-  const canRecordDeposit = String(user?.department || '').trim().toUpperCase() === 'SUSU AGENT';
+  const canRecordDeposit = ['SUSU', 'SUSU AGENT', 'SUSU SUPERVISOR'].includes(String(user?.department || '').trim().toUpperCase()) && !['Supervisor', 'OwnerAdmin', 'SuperAdmin'].includes(String(user?.role || '').trim());
 
   useEffect(() => {
     if (!canRecordDeposit || selectedScope !== 'day') {
@@ -126,7 +126,7 @@ export default function FieldCollection() {
   };
 
   const handleDeposit = async () => {
-    if (!canRecordDeposit) { setError('Only SUSU AGENT users can record deposits.'); return; }
+    if (!canRecordDeposit) { setError('Only SUSU agent users can record deposits.'); return; }
     if (dailyClose) { setError('This collection day has been closed.'); return; }
     const numAmount = parseFloat(amount);
     if (!numAmount || numAmount <= 0) { setError('Please enter a valid positive amount'); return; }
@@ -176,7 +176,7 @@ export default function FieldCollection() {
             <h1 className="font-heading text-2xl lg:text-3xl font-bold text-foreground">Field Collection</h1>
         <p className="text-sm text-muted-foreground mt-1">
           {canUseAgentScope && selectedAgent
-            ? `Viewing collection customers for ${selectedAgent.fullname || selectedAgent.full_name}. Deposit recording remains limited to SUSU AGENT logins.`
+            ? `Viewing collection customers for ${selectedAgent.fullname || selectedAgent.full_name}. Deposit recording remains limited to SUSU agent logins.`
             : 'Search for a customer and record their daily deposit'}
         </p>
           </div>
@@ -210,7 +210,7 @@ export default function FieldCollection() {
 
       {!canRecordDeposit && selectedAgent && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-600">
-          You can review this agent&apos;s customers here, but deposit entry is locked to the SUSU AGENT&apos;s own login.
+          You can review this agent&apos;s customers here, but deposit entry is locked to the SUSU agent&apos;s own login.
         </div>
       )}
 

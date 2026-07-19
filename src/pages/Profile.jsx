@@ -122,7 +122,7 @@ export default function Profile() {
         ]);
         if (!mounted) return;
         setBranches(settings.branches || []);
-        setDepartments(settings.departments?.length ? settings.departments : ["SUSU", "SUSU AGENT"]);
+        setDepartments(settings.departments?.length ? settings.departments : ["SUSU"]);
         if (profile) updateUser(profile);
       } catch {
         // Keep local session profile if refresh fails.

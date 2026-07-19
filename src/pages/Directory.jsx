@@ -45,11 +45,13 @@ function formatLastSeen(value) {
   });
 }
 
-function directoryDepartmentGroup(department) {
-  const normalized = String(department || "Other").trim().toUpperCase();
-  if (normalized === "SUSU") return "SUSU";
-  if (normalized === "SUSU AGENT") return "SUSU AGENTS";
-  return normalized || "Other";
+function directoryDepartmentGroup(member) {
+  const department = String(member?.department || "Other").trim().toUpperCase();
+  const role = String(member?.role || "").trim();
+  if (["SUSU", "SUSU AGENT", "SUSU SUPERVISOR"].includes(department)) {
+    return role === "Supervisor" ? "SUSU SUPERVISORS" : "SUSU AGENTS";
+  }
+  return department || "Other";
 }
 
 function EditStaffDialog({ staff, branches, departments, open, onOpenChange, onSaved }) {
@@ -63,7 +65,7 @@ function EditStaffDialog({ staff, branches, departments, open, onOpenChange, onS
     if (!staff) return;
     setPosition(staff.position || "");
     setBranch(staff.branch || "HEAD OFFICE");
-    setDepartment(staff.department || "SUSU AGENT");
+    setDepartment(staff.department || "SUSU");
     setError("");
   }, [staff]);
 
@@ -181,7 +183,7 @@ export default function Directory() {
         const [settings, users] = await Promise.all([getPortalSettings(), getActiveStaff()]);
         if (!mounted) return;
         setBranches(settings.branches || []);
-        setDepartments(settings.departments?.length ? settings.departments : ["SUSU", "SUSU AGENT"]);
+        setDepartments(settings.departments?.length ? settings.departments : ["SUSU"]);
         setStaff((users || []).filter((member) => member.role !== "OwnerAdmin"));
         setError("");
       } catch (err) {
@@ -234,7 +236,7 @@ export default function Directory() {
     const memberBranch = member.branch || member.branch_name;
     return (
       user?.role === "Supervisor" &&
-      String(member.department || "").trim().toUpperCase() === "SUSU AGENT" &&
+      ["SUSU", "SUSU AGENT", "SUSU SUPERVISOR"].includes(String(member.department || "").trim().toUpperCase()) && member.role !== "Supervisor" &&
       managedBranches.includes(memberBranch)
     );
   };
@@ -246,7 +248,7 @@ export default function Directory() {
   const departmentGroups = useMemo(() => {
     const groups = new Map();
     filtered.forEach((member) => {
-      const department = directoryDepartmentGroup(member.department);
+      const department = directoryDepartmentGroup(member);
       if (!groups.has(department)) groups.set(department, []);
       groups.get(department).push(member);
     });

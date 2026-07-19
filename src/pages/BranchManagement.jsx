@@ -111,8 +111,12 @@ export default function BranchManagement() {
       .map((branch, index) => {
         const members = staff.filter((member) => member.branch === branch);
         const online = members.filter((member) => member.isOnlineNow).length;
-        const supervisors = members.filter((member) => member.role === "Supervisor" || member.department === "SUSU").length;
-        const agents = members.filter((member) => member.department === "SUSU AGENT").length;
+        const supervisors = members.filter((member) => member.role === "Supervisor").length;
+        const agents = members.filter((member) =>
+          ["SUSU", "SUSU AGENT", "SUSU SUPERVISOR"].includes(String(member.department || "").trim().toUpperCase()) &&
+          member.role !== "Supervisor" &&
+          !["OwnerAdmin", "SuperAdmin"].includes(member.role)
+        ).length;
         return {
           id: branch,
           name: branch,

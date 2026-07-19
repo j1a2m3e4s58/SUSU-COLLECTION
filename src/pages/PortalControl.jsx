@@ -29,7 +29,7 @@ import { Building2, Download, ListPlus, Pencil, Plus, RotateCcw, Save, Settings2
 
 const listControls = [
   ["branches", "Branches", "Branch", "Add branch name", []],
-  ["departments", "Departments", "Department", "Add department name", ["SUSU AGENT"]],
+  ["departments", "Departments", "Department", "Add department name", ["SUSU"]],
 ];
 
 const textFields = [

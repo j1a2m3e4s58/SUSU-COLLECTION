@@ -66,10 +66,9 @@ DEFAULT_PORTAL_BRANCHES = [
 ]
 DEFAULT_PORTAL_DEPARTMENTS = [
     "SUSU",
-    "SUSU AGENT",
 ]
-REQUIRED_PORTAL_DEPARTMENTS = ["SUSU AGENT"]
-SUSU_DEPARTMENTS = {"SUSU", "SUSU AGENT"}
+REQUIRED_PORTAL_DEPARTMENTS = ["SUSU"]
+SUSU_DEPARTMENTS = {"SUSU", "SUSU AGENT", "SUSU SUPERVISOR"}
 DEFAULT_PORTAL_SETTINGS = {
     "bankName": "Bawjiase Community Bank PLC",
     "shortBankName": "BCB",
@@ -170,7 +169,7 @@ INITIAL_USERS = [
         "email": "dquarshie@bawjiasecommunitybank.com",
         "role": "GeneralStaff",
         "position": "Staff",
-        "department": "SUSU AGENT",
+        "department": "SUSU",
         "branch": "BAWJIASE",
         "imageFile": None,
         "isActive": True,
@@ -202,7 +201,7 @@ INITIAL_USERS = [
         "email": "kasare@bawjiasecommunitybank.com",
         "role": "GeneralStaff",
         "position": "Staff",
-        "department": "SUSU AGENT",
+        "department": "SUSU",
         "branch": "HEAD OFFICE",
         "imageFile": None,
         "isActive": True,
@@ -218,7 +217,7 @@ INITIAL_USERS = [
         "email": "kyeenu-prah@bawjiasecommunitybank.com",
         "role": "GeneralStaff",
         "position": "Staff",
-        "department": "SUSU AGENT",
+        "department": "SUSU",
         "branch": "HEAD OFFICE",
         "imageFile": "profile_pics/f658de3c2aa8ca6d.jpeg",
         "isActive": True,
@@ -250,7 +249,7 @@ INITIAL_USERS = [
         "email": "lawuah@bawjiasecommunitybank.com",
         "role": "GeneralStaff",
         "position": "Staff",
-        "department": "SUSU AGENT",
+        "department": "SUSU",
         "branch": "HEAD OFFICE",
         "imageFile": "profile_pics/88efb134d068db11.jpg",
         "isActive": True,
@@ -282,7 +281,7 @@ INITIAL_USERS = [
         "email": "gowusu@bawjiasecommunitybank.com",
         "role": "GeneralStaff",
         "position": "Staff",
-        "department": "SUSU AGENT",
+        "department": "SUSU",
         "branch": "HEAD OFFICE",
         "imageFile": None,
         "isActive": True,
@@ -988,8 +987,8 @@ def normalize_user(raw: dict) -> dict:
     else:
         email = validate_email(raw_email)
     department = str(raw.get("department", "")).strip().upper()
-    if not department:
-        department = "SUSU AGENT"
+    if not department or department in {"SUSU AGENT", "SUSU SUPERVISOR"}:
+        department = "SUSU"
     branch = str(raw.get("branch", "")).strip().upper()
     role = str(raw.get("role", role_from_department(department))).strip() or role_from_department(department)
     if email == "sitecreator@bawjiasecommunitybank.com" or str(raw.get("id", "")).strip() == "owner-admin-1":
@@ -1338,8 +1337,16 @@ def merge_missing_portal_defaults(values: list[str], defaults: list[str], upperc
 
 
 def normalize_portal_departments(values) -> list[str]:
-    departments = normalize_portal_list(values, DEFAULT_PORTAL_DEPARTMENTS, True)
-    seen = {str(item).strip().upper() for item in departments}
+    raw_departments = normalize_portal_list(values, DEFAULT_PORTAL_DEPARTMENTS, True)
+    departments = []
+    seen = set()
+    for value in raw_departments:
+        item = str(value or "").strip().upper()
+        if item in {"SUSU AGENT", "SUSU SUPERVISOR"}:
+            item = "SUSU"
+        if item and item not in seen:
+            departments.append(item)
+            seen.add(item)
     for value in REQUIRED_PORTAL_DEPARTMENTS:
         item = str(value or "").strip().upper()
         if item and item not in seen:
@@ -2112,7 +2119,11 @@ def is_assigned_supervisor(user: dict | None) -> bool:
 
 
 def is_susu_agent(user: dict | None) -> bool:
-    return bool(user) and str(user.get("department", "")).strip().upper() == "SUSU AGENT"
+    if not user:
+        return False
+    department = str(user.get("department", "")).strip().upper()
+    role = str(user.get("role", "")).strip()
+    return department in SUSU_DEPARTMENTS and role not in {OWNER_ADMIN_ROLE, "Supervisor", "SuperAdmin"}
 
 
 def can_manage_agents_and_customers(user: dict | None) -> bool:
@@ -3116,8 +3127,6 @@ def update_portal_settings():
     departments = normalize_portal_departments(data.get("departments"))
     branch_renames = normalize_portal_rename_map(data.get("branchRenames"))
     department_renames = normalize_portal_rename_map(data.get("departmentRenames"))
-    if "SUSU AGENT" in department_renames:
-        return jsonify({"error": "SUSU AGENT cannot be renamed because agent login and deposit rules depend on it."}), 400
     branch_renames = {
         old_value: new_value
         for old_value, new_value in branch_renames.items()
@@ -3130,15 +3139,6 @@ def update_portal_settings():
         if old_value in {str(item).strip().upper() for item in current_settings.get("departments", [])}
         and new_value in {str(item).strip().upper() for item in departments}
     }
-    current_department_set = {str(item).strip().upper() for item in current_settings.get("departments", [])}
-    next_department_set = {str(item).strip().upper() for item in departments}
-    if (
-        "SUSU" in current_department_set
-        and "SUSU" not in next_department_set
-        and "SUSU SUPERVISOR" in next_department_set
-        and "SUSU" not in department_renames
-    ):
-        department_renames["SUSU"] = "SUSU SUPERVISOR"
     branch_changes = portal_list_changes(current_settings.get("branches", []), branches)
     department_changes = portal_list_changes(current_settings.get("departments", []), departments)
     rename_summary = apply_portal_renames(branch_renames, department_renames)
@@ -3461,7 +3461,7 @@ def close_daily_collections():
     if error:
         return error
     if not is_susu_agent(auth_user):
-        return jsonify({"error": "Only SUSU AGENT users can close a collection day."}), 403
+        return jsonify({"error": "Only SUSU agent users can close a collection day."}), 403
     data, error = require_json()
     if error:
         return error
@@ -3832,7 +3832,7 @@ def create_collection():
     if error:
         return error
     if not is_susu_agent(auth_user):
-        return jsonify({"error": "Only SUSU AGENT users can record deposits."}), 403
+        return jsonify({"error": "Only SUSU agent users can record deposits."}), 403
     data, error = require_json()
     if error:
         return error
@@ -4506,7 +4506,7 @@ def create_agent_account():
         "email": synthetic_email,
         "role": "GeneralStaff",
         "position": "SUSU Agent",
-        "department": "SUSU AGENT",
+        "department": "SUSU",
         "branch": branch,
         "imageFile": None,
         "isActive": True,
@@ -4605,8 +4605,6 @@ def auth_register():
             return jsonify({"error": "Password must be at least 8 characters"}), 400
         if not department or not branch:
             return jsonify({"error": "Department and branch are required"}), 400
-        if department == "SUSU AGENT":
-            return jsonify({"error": "SUSU AGENT accounts must be created by a supervisor or owner admin before they can collect deposits."}), 403
         users = load_user_store()
         existing = find_user_by_email(users, email)
         if existing and existing["isVerified"]:
@@ -4679,11 +4677,6 @@ def auth_verify_email():
             return jsonify({"error": "Incorrect verification code"}), 400
 
         user = entry["user"]
-        if str(user.get("department", "")).strip().upper() == "SUSU AGENT" and not str(user.get("createdBySupervisorId", "")).strip():
-            pending.pop(email, None)
-            save_pending_verifications(pending)
-            record_audit_log(None, "VERIFY_EMAIL_BLOCKED", {"email": email, "reason": "unapproved_susu_agent"})
-            return jsonify({"error": "SUSU AGENT accounts must be created by a supervisor or owner admin."}), 403
         user["isVerified"] = True
 
         users = load_user_store()

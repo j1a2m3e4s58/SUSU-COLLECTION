@@ -45,6 +45,10 @@ export default function AgentManagement() {
     ? user.managedBranches
     : [user?.branch].filter(Boolean);
   const scopedBranches = isOwner ? branches : branches.filter((branch) => supervisorBranches.includes(branch));
+  const isSusuAgentStaff = (member) =>
+    ['SUSU', 'SUSU AGENT', 'SUSU SUPERVISOR'].includes(String(member?.department || '').trim().toUpperCase()) &&
+    String(member?.role || '').trim() !== 'Supervisor' &&
+    !['OwnerAdmin', 'SuperAdmin'].includes(String(member?.role || '').trim());
 
   const refreshData = async () => {
     setLoading(true);
@@ -63,7 +67,7 @@ export default function AgentManagement() {
       setImportBranch((current) => current || allowed[0] || '');
       setAgentForm((current) => ({ ...current, branch: current.branch || allowed[0] || '' }));
       setStaff((s || []).filter(x =>
-        String(x.department || '').trim().toUpperCase() === 'SUSU AGENT' &&
+        isSusuAgentStaff(x) &&
         (isOwner || supervisorBranches.includes(x.branch || x.branch_name))
       ));
       setCollections(c || []);
@@ -119,7 +123,7 @@ export default function AgentManagement() {
       setTimeout(() => setSuccess(''), 4000);
       const refreshed = await getActiveStaff();
       setStaff((refreshed || []).filter(x =>
-        String(x.department || '').trim().toUpperCase() === 'SUSU AGENT' &&
+        isSusuAgentStaff(x) &&
         (isOwner || supervisorBranches.includes(x.branch || x.branch_name))
       ));
     } catch { setError('Failed to transfer agent. Please try again.'); }
@@ -361,7 +365,7 @@ export default function AgentManagement() {
     <div className="space-y-6">
       <div>
         <h1 className="font-heading text-2xl lg:text-3xl font-bold text-foreground flex items-center gap-2"><UserCog className="w-6 h-6 text-blue-500" /> Agent Management</h1>
-        <p className="text-sm text-muted-foreground mt-1">Manage staff registered as SUSU AGENT, reassign branches, and monitor field performance</p>
+        <p className="text-sm text-muted-foreground mt-1">Manage SUSU agents, reassign branches, and monitor field performance</p>
       </div>
 
       {success && <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-sm text-emerald-500">{success}</div>}

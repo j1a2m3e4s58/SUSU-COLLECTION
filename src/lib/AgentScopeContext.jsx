@@ -17,7 +17,9 @@ function isBranchAllowed(user, branch) {
 }
 
 function isSusuAgent(user) {
-  return normalize(user?.department) === 'SUSU AGENT';
+  const department = normalize(user?.department);
+  const role = String(user?.role || '').trim();
+  return ['SUSU', 'SUSU AGENT', 'SUSU SUPERVISOR'].includes(department) && !['Supervisor', 'OwnerAdmin', 'SuperAdmin'].includes(role);
 }
 
 export function AgentScopeProvider({ children }) {
