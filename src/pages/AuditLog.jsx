@@ -73,7 +73,7 @@ export default function AuditLog() {
     setError('');
     setSuccess('');
     try {
-      await deleteAuditLog(item.id);
+      await deleteAuditLog(item.id, true);
       setLogs((current) => current.filter((log) => log.id !== item.id));
       setSelectedIds((current) => {
         const next = new Set(current);
@@ -97,7 +97,7 @@ export default function AuditLog() {
     setError('');
     setSuccess('');
     try {
-      await deleteAuditLogs(idsToDelete);
+      await deleteAuditLogs(idsToDelete, true);
       setLogs((current) => current.filter((item) => !idsToDeleteSet.has(String(item.id))));
       setSelectedIds(new Set());
       setSuccess(`${selectedLogs.length} audit log entr${selectedLogs.length === 1 ? 'y' : 'ies'} archived from the active view.`);

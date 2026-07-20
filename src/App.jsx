@@ -32,27 +32,28 @@ import Notifications from '@/pages/Notifications';
 import PortalControl from '@/pages/PortalControl';
 import PastStaff from '@/pages/PastStaff';
 import InactiveCustomers from '@/pages/InactiveCustomers';
+import { canManageCustomers, isOwnerAdmin, isSusuAgent } from '@/lib/roles';
 
 const RequireAdmin = ({ children }) => {
   const { user } = useAuth();
-  const allowed = user?.role === 'OwnerAdmin';
+  const allowed = isOwnerAdmin(user);
   return allowed ? children : <Navigate to="/" replace />;
 };
 
 const RequireOwner = ({ children }) => {
   const { user } = useAuth();
-  return user?.role === 'OwnerAdmin' ? children : <Navigate to="/" replace />;
+  return isOwnerAdmin(user) ? children : <Navigate to="/" replace />;
 };
 
 const RequireSusuAgent = ({ children }) => {
   const { user } = useAuth();
-  const allowed = String(user?.department || '').trim().toUpperCase() === 'SUSU AGENT';
+  const allowed = isSusuAgent(user);
   return allowed ? children : <Navigate to="/" replace />;
 };
 
 const RequireCustomerManager = ({ children }) => {
   const { user } = useAuth();
-  const allowed = user?.role === 'OwnerAdmin' || user?.role === 'Supervisor';
+  const allowed = canManageCustomers(user);
   return allowed ? children : <Navigate to="/" replace />;
 };
 

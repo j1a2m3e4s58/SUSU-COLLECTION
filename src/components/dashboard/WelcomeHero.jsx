@@ -1,11 +1,13 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { Plus, BarChart3, Receipt, Users } from 'lucide-react';
+import { canManageCustomers, isSusuAgent } from '@/lib/roles';
 
 export default function WelcomeHero({ user }) {
   const name = user?.full_name || 'User';
   const branch = user?.branch_name || 'All Branches';
-  const isSusuAgent = String(user?.department || '').trim().toUpperCase() === 'SUSU AGENT';
+  const agentUser = isSusuAgent(user);
+  const customerManager = canManageCustomers(user);
 
   return (
     <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-card via-card to-blue-950/30 border border-border p-5 lg:p-8">
@@ -30,7 +32,7 @@ export default function WelcomeHero({ user }) {
         </div>
 
         <div className="flex flex-wrap gap-2 lg:gap-3">
-          {isSusuAgent && (
+          {agentUser && (
             <Link to="/field-collection" className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2.5 rounded-lg shadow-lg shadow-blue-600/25 transition-all hover:scale-105">
               <Plus className="w-4 h-4" /> New Collection
             </Link>
@@ -41,9 +43,11 @@ export default function WelcomeHero({ user }) {
           <Link to="/transactions" className="inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-700 text-white text-sm font-medium px-4 py-2.5 rounded-lg shadow-lg shadow-cyan-600/25 transition-all hover:scale-105">
             <Receipt className="w-4 h-4" /> Transactions
           </Link>
-          <Link to="/customers" className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium px-4 py-2.5 rounded-lg shadow-lg shadow-emerald-600/25 transition-all hover:scale-105">
-            <Users className="w-4 h-4" /> Customers
-          </Link>
+          {customerManager && (
+            <Link to="/customers" className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium px-4 py-2.5 rounded-lg shadow-lg shadow-emerald-600/25 transition-all hover:scale-105">
+              <Users className="w-4 h-4" /> Customers
+            </Link>
+          )}
         </div>
       </div>
     </div>

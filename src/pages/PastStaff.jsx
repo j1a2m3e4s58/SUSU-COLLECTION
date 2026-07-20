@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { deleteStaff, getArchivedStaff, resolveAssetUrl, restoreStaff } from '@/api/portalClient';
+import { deleteStaff, exportBackup, getArchivedStaff, resolveAssetUrl, restoreStaff } from '@/api/portalClient';
 import { ArchiveRestore, Mail, Phone, Trash2, UserX } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -16,6 +16,8 @@ export default function PastStaff() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleteBackupReady, setDeleteBackupReady] = useState(false);
+  const [exportingBackup, setExportingBackup] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -45,11 +47,15 @@ export default function PastStaff() {
   };
 
   const handleDelete = async (member) => {
+    if (!deleteBackupReady) {
+      setError('Export a backup before deleting this account.');
+      return;
+    }
     setBusyId(member.id);
     setError('');
     setSuccess('');
     try {
-      await deleteStaff(member.id);
+      await deleteStaff(member.id, true);
       setStaff((current) => current.filter((item) => item.id !== member.id));
       setSuccess(`${member.fullname} has been permanently removed.`);
     } catch (err) {
@@ -57,6 +63,29 @@ export default function PastStaff() {
     }
     setDeleteTarget(null);
     setBusyId('');
+  };
+
+  const exportDeleteBackup = async () => {
+    setExportingBackup(true);
+    setError('');
+    try {
+      const backup = await exportBackup();
+      const blob = new Blob([JSON.stringify(backup.data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = backup.filename || `susu-portal-backup-${Date.now()}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setDeleteBackupReady(true);
+      setSuccess('Backup exported. You can now delete this account.');
+    } catch (err) {
+      setError(err.message || 'Could not export a backup.');
+    } finally {
+      setExportingBackup(false);
+    }
   };
 
   return (
@@ -109,7 +138,7 @@ export default function PastStaff() {
                     <ArchiveRestore className="h-4 w-4" />
                     Restore
                   </Button>
-                  <Button type="button" variant="ghost" size="sm" className="gap-2 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={busyId === member.id} onClick={() => setDeleteTarget(member)}>
+                  <Button type="button" variant="ghost" size="sm" className="gap-2 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={busyId === member.id} onClick={() => { setDeleteBackupReady(false); setDeleteTarget(member); }}>
                     <Trash2 className="h-4 w-4" />
                     Delete
                   </Button>
@@ -129,6 +158,11 @@ export default function PastStaff() {
         confirmLabel="Delete"
         destructive
         busy={Boolean(busyId)}
+        confirmDisabled={!deleteBackupReady}
+        secondaryLabel="Export Backup"
+        secondaryBusy={exportingBackup}
+        onSecondary={exportDeleteBackup}
+        notice={deleteBackupReady ? 'Backup exported. Financial history will be preserved.' : 'Export a backup before permanently deleting this login account.'}
         onConfirm={() => deleteTarget && handleDelete(deleteTarget)}
       />
     </div>

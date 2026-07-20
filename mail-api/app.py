@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import hmac
 import os
 import secrets
 import smtplib
@@ -104,14 +105,14 @@ DEFAULT_PORTAL_SETTINGS = {
 }
 
 TEST_CUSTOMER_SEED_ROWS = [
-    ("TEST AMA MENSAH", "131000100001", "0240000001", "BAWJIASE"),
-    ("TEST KWAME ADJEI", "131000100002", "0240000002", "BAWJIASE"),
-    ("TEST EFUA BOATENG", "131000100003", "0240000003", "OFAAKOR"),
-    ("TEST KOJO APPIAH", "131000100004", "0240000004", "OFAAKOR"),
-    ("TEST ABENA OWUSU", "131000100005", "0240000005", "ADEISO"),
-    ("TEST YAW ASANTE", "131000100006", "0240000006", "ADEISO"),
-    ("TEST AKOSUA DARKO", "131000100007", "0240000007", "HEAD OFFICE"),
-    ("TEST KOFI SARPONG", "131000100008", "0240000008", "KASOA MAIN"),
+    ("TEST AMA MENSAH", "1310000100001", "0240000001", "BAWJIASE"),
+    ("TEST KWAME ADJEI", "1310000100002", "0240000002", "BAWJIASE"),
+    ("TEST EFUA BOATENG", "1310000100003", "0240000003", "OFAAKOR"),
+    ("TEST KOJO APPIAH", "1310000100004", "0240000004", "OFAAKOR"),
+    ("TEST ABENA OWUSU", "1310000100005", "0240000005", "ADEISO"),
+    ("TEST YAW ASANTE", "1310000100006", "0240000006", "ADEISO"),
+    ("TEST AKOSUA DARKO", "1310000100007", "0240000007", "HEAD OFFICE"),
+    ("TEST KOFI SARPONG", "1310000100008", "0240000008", "KASOA MAIN"),
 ]
 
 
@@ -1005,7 +1006,11 @@ def normalize_user(raw: dict) -> dict:
         "imageFile": raw.get("imageFile"),
         "managedBranches": normalize_scope_list(
             raw.get("managedBranches"),
-            empty_default=["ALL"] if role in GLOBAL_MANAGER_ROLES else [],
+            empty_default=(
+                ["ALL"]
+                if role in GLOBAL_MANAGER_ROLES
+                else ([branch] if role == "Supervisor" and branch else [])
+            ),
         ),
         "managedDepartmentsByBranch": normalize_managed_departments_by_branch(
             raw.get("managedDepartmentsByBranch")
@@ -1477,6 +1482,21 @@ def apply_portal_renames(branch_renames: dict[str, str], department_renames: dic
     return summary
 
 
+def persist_normalized_susu_departments() -> int:
+    raw_users = read_json_file(USERS_STORE_PATH, [])
+    if not isinstance(raw_users, list):
+        return 0
+    legacy_count = sum(
+        1
+        for user in raw_users
+        if isinstance(user, dict)
+        and str(user.get("department", "")).strip().upper() in {"SUSU AGENT", "SUSU SUPERVISOR"}
+    )
+    if legacy_count:
+        save_user_store(load_user_store())
+    return legacy_count
+
+
 def portal_list_changes(previous_values: object, next_values: object) -> dict[str, list[str]]:
     previous = normalize_portal_list(previous_values, [], True)
     current = normalize_portal_list(next_values, [], True)
@@ -1559,6 +1579,12 @@ def public_portal_settings(settings: dict | None = None) -> dict:
 
 def configured_portal_control_password() -> str:
     return PORTAL_CONTROL_PASSWORD
+
+
+def portal_control_password_matches(candidate: object, expected: str | None = None) -> bool:
+    configured = str(expected if expected is not None else configured_portal_control_password())
+    supplied = str(candidate or "")
+    return bool(configured) and hmac.compare_digest(supplied, configured)
 
 
 def next_content_id(items: list[dict], floor: int = 1000) -> int:
@@ -1692,6 +1718,25 @@ def record_audit_log(
     logs.insert(0, entry)
     save_audit_logs_store(logs)
     return entry
+
+
+def has_recent_backup_export(actor: dict, max_age_ms: int = 15 * 60 * 1000) -> bool:
+    actor_id = str(actor.get("id", "") or "")
+    cutoff = now_ms() - max_age_ms
+    return any(
+        entry.get("action") == "EXPORT_PRODUCTION_BACKUP"
+        and str(entry.get("actorId", "")) == actor_id
+        and int(entry.get("timestamp", 0) or 0) >= cutoff
+        for entry in load_audit_logs_store()
+    )
+
+
+def backup_confirmation_error(actor: dict, confirmed: object):
+    if not confirmed:
+        return jsonify({"error": "Export a backup before continuing."}), 400
+    if not has_recent_backup_export(actor):
+        return jsonify({"error": "Your backup confirmation has expired. Export a fresh backup before continuing."}), 400
+    return None
 
 
 def record_content_audit(actor: dict, action: str, module: str, item: dict | None) -> None:
@@ -2171,7 +2216,7 @@ def find_user_by_username_safe(users: list[dict], username: object):
 
 
 def can_view_operational_record(user: dict, item: dict) -> bool:
-    if is_global_manager(user) or user_has_permission(user, "userManagement"):
+    if is_global_manager(user):
         return True
     branch = str(item.get("branch_name") or item.get("branch_id") or item.get("branch") or "").strip().upper()
     if is_assigned_supervisor(user):
@@ -2202,7 +2247,7 @@ def can_view_operational_record(user: dict, item: dict) -> bool:
 
 
 def can_view_staff_record(viewer: dict, staff_user: dict) -> bool:
-    if is_global_manager(viewer) or user_has_permission(viewer, "userManagement"):
+    if is_global_manager(viewer):
         return True
     if str(viewer.get("id")) == str(staff_user.get("id")):
         return True
@@ -2213,19 +2258,11 @@ def can_view_staff_record(viewer: dict, staff_user: dict) -> bool:
 
 def manageable_scope_message(user: dict) -> str:
     if is_global_manager(user):
-        return "You can manage all branches and SUSU categories."
+        return "You can manage all SUSU branches."
     managed_branches = normalize_scope_list(user.get("managedBranches"), empty_default=[])
-    managed_departments = normalize_managed_departments_by_branch(
-        user.get("managedDepartmentsByBranch")
-    )
     if not managed_branches:
         return "No supervisor branch scope is assigned to your account."
-    parts = []
-    for branch in managed_branches:
-        departments = managed_departments.get(branch, [])
-        label = "all departments" if "ALL" in departments else ", ".join(departments)
-        parts.append(f"{branch} > {label or 'no department'}")
-    return f"You can only manage: {'; '.join(parts)}."
+    return f"You can only manage these SUSU branches: {', '.join(managed_branches)}."
 
 
 def ensure_content_management_access(
@@ -3036,6 +3073,12 @@ def delete_audit_log(item_id: int):
     _, auth_user, error = require_owner_admin()
     if error:
         return error
+    data, error = require_json()
+    if error:
+        return error
+    backup_error = backup_confirmation_error(auth_user, data.get("backupConfirmed"))
+    if backup_error:
+        return backup_error
     logs = load_audit_logs_store()
     item = next((entry for entry in logs if int(entry.get("id", 0) or 0) == item_id), None)
     if not item:
@@ -3059,6 +3102,9 @@ def delete_audit_logs():
     data, error = require_json()
     if error:
         return error
+    backup_error = backup_confirmation_error(auth_user, data.get("backupConfirmed"))
+    if backup_error:
+        return backup_error
     ids = {
         int(item)
         for item in data.get("ids", [])
@@ -3098,7 +3144,7 @@ def unlock_portal_settings():
     expected_password = configured_portal_control_password()
     if not expected_password:
         return jsonify({"error": "PORTAL_CONTROL_PASSWORD is not configured on the server."}), 500
-    if password.upper() != expected_password.upper():
+    if not portal_control_password_matches(password, expected_password):
         record_audit_log(auth_user, "PORTAL_CONTROL_UNLOCK_FAILED", {"reason": "invalid_password"})
         return jsonify({"error": "Portal control password is incorrect"}), 403
     record_audit_log(auth_user, "PORTAL_CONTROL_UNLOCKED", {"ok": True})
@@ -3120,7 +3166,7 @@ def update_portal_settings():
     expected_password = configured_portal_control_password()
     if not expected_password:
         return jsonify({"error": "PORTAL_CONTROL_PASSWORD is not configured on the server."}), 500
-    if password.upper() != expected_password.upper():
+    if not portal_control_password_matches(password, expected_password):
         return jsonify({"error": "Portal control password is incorrect"}), 403
     current_settings = load_portal_settings_store()
     branches = normalize_portal_branches(data.get("branches"))
@@ -3141,7 +3187,18 @@ def update_portal_settings():
     }
     branch_changes = portal_list_changes(current_settings.get("branches", []), branches)
     department_changes = portal_list_changes(current_settings.get("departments", []), departments)
+    dangerous_list_change = bool(
+        branch_changes["removed"]
+        or department_changes["removed"]
+        or branch_renames
+        or department_renames
+    )
+    if dangerous_list_change:
+        backup_error = backup_confirmation_error(auth_user, data.get("backupConfirmed"))
+        if backup_error:
+            return backup_error
     rename_summary = apply_portal_renames(branch_renames, department_renames)
+    normalized_susu_users = persist_normalized_susu_departments()
     settings = {
         "bankName": str(data.get("bankName") or DEFAULT_PORTAL_SETTINGS["bankName"]).strip(),
         "shortBankName": str(data.get("shortBankName") or DEFAULT_PORTAL_SETTINGS["shortBankName"]).strip(),
@@ -3193,6 +3250,7 @@ def update_portal_settings():
             "branchChanges": branch_changes,
             "departmentChanges": department_changes,
             "renamedRecords": rename_summary,
+            "normalizedSusuUsers": normalized_susu_users,
             "emailDomain": settings["emailDomain"],
             "appMode": settings["appMode"],
             "updatedAt": settings["updatedAt"],
@@ -3207,11 +3265,73 @@ def update_portal_settings():
     return jsonify({"ok": True, "settings": public_portal_settings(settings)})
 
 
-@app.route("/api/backup/export", methods=["GET"])
-def export_production_backup():
+@app.route("/api/maintenance/normalize-susu-departments", methods=["POST", "OPTIONS"])
+def normalize_stored_susu_departments():
+    preflight = handle_options()
+    if preflight:
+        return preflight
     _, auth_user, error = require_owner_admin()
     if error:
         return error
+    data, error = require_json()
+    if error:
+        return error
+    password = str(data.get("password", "") or "")
+    expected_password = configured_portal_control_password()
+    if not portal_control_password_matches(password, expected_password):
+        return jsonify({"error": "Portal control password is incorrect"}), 403
+    backup_error = backup_confirmation_error(auth_user, data.get("backupConfirmed"))
+    if backup_error:
+        return backup_error
+
+    legacy_names = {"SUSU AGENT": "SUSU", "SUSU SUPERVISOR": "SUSU"}
+    normalized_users = persist_normalized_susu_departments()
+    migrated_records = apply_portal_renames({}, legacy_names)
+    settings = load_portal_settings_store()
+    settings["departments"] = ["SUSU"]
+    settings["updatedAt"] = now_ms()
+    settings["updatedBy"] = {
+        "id": auth_user["id"],
+        "fullname": auth_user["fullname"],
+        "email": auth_user["email"],
+    }
+    save_portal_settings_store(settings)
+    record_audit_log(
+        auth_user,
+        "NORMALIZE_SUSU_DEPARTMENTS",
+        {"normalizedUsers": normalized_users, "migratedRecords": migrated_records},
+    )
+    return jsonify({
+        "ok": True,
+        "normalizedUsers": normalized_users,
+        "migratedRecords": migrated_records,
+        "settings": public_portal_settings(settings),
+    })
+
+
+@app.route("/api/backup/export", methods=["GET"])
+def export_production_backup():
+    _, auth_user, error = require_authenticated_user()
+    if error:
+        return error
+    if not can_manage_agents_and_customers(auth_user):
+        return jsonify({"error": "Only owner admin or an assigned supervisor can export a backup."}), 403
+    owner_export = is_owner_admin(auth_user)
+    all_users = load_user_store()
+    visible_users = all_users if owner_export else [
+        item for item in all_users if can_view_staff_record(auth_user, item)
+    ]
+    visible_user_ids = {str(item.get("id", "")) for item in visible_users}
+    all_presence = load_presence_store()
+    customers = load_json_list_store(CUSTOMERS_STORE_PATH)
+    customer_imports = load_json_list_store(CUSTOMER_IMPORTS_STORE_PATH)
+    collections = load_json_list_store(COLLECTIONS_STORE_PATH)
+    daily_closes = load_json_list_store(DAILY_CLOSES_STORE_PATH)
+    if not owner_export:
+        customers = [item for item in customers if can_view_operational_record(auth_user, item)]
+        customer_imports = [item for item in customer_imports if can_view_operational_record(auth_user, item)]
+        collections = [item for item in collections if can_view_operational_record(auth_user, item)]
+        daily_closes = [item for item in daily_closes if can_view_operational_record(auth_user, item)]
     backup = {
         "metadata": {
             "app": "bawjiase-staff-portal",
@@ -3224,24 +3344,23 @@ def export_production_backup():
             },
             "dataDir": DATA_DIR,
             "schemaVersion": 1,
+            "scope": "all-branches" if owner_export else manageable_scope_message(auth_user),
         },
         "stores": {
-            "users": load_user_store(),
-            "presence": load_presence_store(),
-            "announcements": load_json_list_store(ANNOUNCEMENTS_STORE_PATH),
-            "forms": load_json_list_store(FORMS_STORE_PATH),
-            "trainingVideos": load_json_list_store(TRAINING_VIDEOS_STORE_PATH),
-            "trainingDocuments": load_json_list_store(TRAINING_DOCUMENTS_STORE_PATH),
-            "notifications": load_json_list_store(NOTIFICATIONS_STORE_PATH),
-            "trainingVideoProgress": load_training_video_progress_store(),
-            "trainingDocumentOpens": load_training_document_opens_store(),
-            "trainingReminders": load_training_reminders_store(),
-            "auditLogs": load_audit_logs_store(),
+            "users": visible_users,
+            "passwords": load_password_store() if owner_export else {},
+            "presence": {
+                user_id: timestamp
+                for user_id, timestamp in all_presence.items()
+                if user_id in visible_user_ids
+            },
+            "notifications": load_json_list_store(NOTIFICATIONS_STORE_PATH) if owner_export else [],
+            "auditLogs": load_audit_logs_store() if owner_export else [],
             "portalSettings": public_portal_settings(),
-            "customers": load_json_list_store(CUSTOMERS_STORE_PATH),
-            "customerImports": load_json_list_store(CUSTOMER_IMPORTS_STORE_PATH),
-            "collections": load_json_list_store(COLLECTIONS_STORE_PATH),
-            "dailyCloses": load_json_list_store(DAILY_CLOSES_STORE_PATH),
+            "customers": customers,
+            "customerImports": customer_imports,
+            "collections": collections,
+            "dailyCloses": daily_closes,
         },
     }
     response = jsonify(backup)
@@ -3276,15 +3395,22 @@ def import_production_backup():
     expected_password = configured_portal_control_password()
     if not expected_password:
         return jsonify({"error": "PORTAL_CONTROL_PASSWORD is not configured on the server."}), 500
-    if password.upper() != expected_password.upper():
+    if not portal_control_password_matches(password, expected_password):
         return jsonify({"error": "Portal control password is incorrect"}), 403
     stores = data.get("stores") if isinstance(data.get("stores"), dict) else None
     if not stores:
         return jsonify({"error": "Backup file is missing stores data."}), 400
+    metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+    backup_scope = str(metadata.get("scope", "") or "").strip()
+    if backup_scope and backup_scope != "all-branches":
+        return jsonify({
+            "error": "Only a full Owner backup can restore the complete system. Branch-scoped backups are export-only."
+        }), 400
 
     current_backup = {
         "users": load_user_store(),
-            "presence": load_presence_store(),
+        "passwords": load_password_store(),
+        "presence": load_presence_store(),
         "notifications": load_json_list_store(NOTIFICATIONS_STORE_PATH),
         "auditLogs": load_audit_logs_store(),
         "portalSettings": public_portal_settings(),
@@ -3296,10 +3422,23 @@ def import_production_backup():
 
     try:
         with DATA_LOCK:
+            if "users" in stores and isinstance(stores.get("users"), list):
+                imported_users = [
+                    normalize_user(item)
+                    for item in stores.get("users") or []
+                    if isinstance(item, dict)
+                ]
+                if not any(is_owner_admin(item) for item in imported_users):
+                    imported_users.insert(0, normalize_user(OWNER_ADMIN_USER))
+                save_user_store(imported_users)
+            if "passwords" in stores and isinstance(stores.get("passwords"), dict):
+                save_password_store(stores.get("passwords") or {})
             if "presence" in stores and isinstance(stores.get("presence"), dict):
                 save_presence_store(stores.get("presence") or {})
             if "notifications" in stores:
                 save_json_list_store(NOTIFICATIONS_STORE_PATH, stores.get("notifications") or [])
+            if "auditLogs" in stores and isinstance(stores.get("auditLogs"), list):
+                save_audit_logs_store(stores.get("auditLogs") or [])
             if "portalSettings" in stores and isinstance(stores.get("portalSettings"), dict):
                 imported_settings = {**DEFAULT_PORTAL_SETTINGS, **stores.get("portalSettings")}
                 imported_settings.pop("portalControlPassword", None)
@@ -3320,8 +3459,10 @@ def import_production_backup():
                 save_json_list_store(DAILY_CLOSES_STORE_PATH, stores.get("dailyCloses") or [])
     except Exception as exc:
         save_user_store(current_backup["users"])
+        save_password_store(current_backup["passwords"])
         save_presence_store(current_backup["presence"])
         save_json_list_store(NOTIFICATIONS_STORE_PATH, current_backup["notifications"])
+        save_audit_logs_store(current_backup["auditLogs"])
         save_portal_settings_store(current_backup["portalSettings"])
         save_json_list_store(CUSTOMERS_STORE_PATH, current_backup["customers"])
         save_json_list_store(CUSTOMER_IMPORTS_STORE_PATH, current_backup["customerImports"])
@@ -3344,8 +3485,9 @@ def clear_test_data():
     data, error = require_json()
     if error:
         return error
-    if not data.get("backupConfirmed"):
-        return jsonify({"error": "Export a backup before clearing test data."}), 400
+    backup_error = backup_confirmation_error(auth_user, data.get("backupConfirmed"))
+    if backup_error:
+        return backup_error
     settings = load_portal_settings_store()
     if str(settings.get("appMode", "test")).lower() != "test":
         return jsonify({"error": "Switch the portal to Test Mode before clearing test data."}), 400
@@ -3870,6 +4012,10 @@ def create_collection():
             return jsonify({"error": "Customer not found"}), 404
         if str(customer.get("customer_status", "active")).lower() != "active":
             return jsonify({"error": "Only active customers can receive deposits."}), 400
+        try:
+            customer_account_number = normalize_account_number(customer.get("account_number"))
+        except ValueError:
+            return jsonify({"error": "This customer has an invalid account number. Ask a supervisor to correct it before collecting a deposit."}), 409
         if not can_view_operational_record(auth_user, customer):
             return jsonify({"error": "You can only record deposits for customers assigned to you."}), 403
         branch_name = str((customer or {}).get("branch_name") or auth_user.get("branch") or "").strip().upper()
@@ -3889,7 +4035,7 @@ def create_collection():
             "id": collection_id,
             "customer_id": customer_id,
             "account_name": str(customer.get("account_name") or "").strip(),
-            "account_number": str(customer.get("account_number") or "").strip(),
+            "account_number": customer_account_number,
             "amount": round(amount, 2),
             "agent_name": auth_user["fullname"],
             "agent_id": auth_user["id"],
@@ -4229,6 +4375,9 @@ def update_staff(user_id: str):
     owner_actor = is_owner_admin(auth_user)
     if not owner_actor and not (can_manage_agents_and_customers(auth_user) and is_susu_agent(user)):
         return jsonify({"error": "Only owner admin can edit this staff member."}), 403
+    privileged_fields = {"role", "managedBranches", "managedDepartmentsByBranch", "permissions", "department", "isActive"}
+    if not owner_actor and any(field in data for field in privileged_fields):
+        return jsonify({"error": "Only owner admin can change staff roles, access scope, department, or account status."}), 403
     if not can_view_staff_record(auth_user, user):
         return scoped_access_denial(auth_user)
     previous_active = bool(user.get("isActive", False))
@@ -4335,6 +4484,18 @@ def update_staff(user_id: str):
                 },
             ),
         )
+    if str(before_staff.get("role", "")) != str(user.get("role", "")):
+        record_audit_log(
+            auth_user,
+            "CHANGE_STAFF_ROLE",
+            staff_audit_target(user, {"before": before_staff.get("role"), "after": user.get("role")}),
+        )
+    if str(before_staff.get("branch", "")).strip().upper() != str(user.get("branch", "")).strip().upper():
+        record_audit_log(
+            auth_user,
+            "TRANSFER_STAFF_BRANCH",
+            staff_audit_target(user, {"before": before_staff.get("branch"), "after": user.get("branch")}),
+        )
     if "isActive" in data and bool(user.get("isActive", False)) != previous_active:
         record_audit_log(
             auth_user,
@@ -4438,6 +4599,12 @@ def delete_staff(user_id: str):
         return error
     if not can_manage_agents_and_customers(auth_user):
         return jsonify({"error": "Only supervisors or owner admin can remove agents."}), 403
+    data, error = require_json()
+    if error:
+        return error
+    backup_error = backup_confirmation_error(auth_user, data.get("backupConfirmed"))
+    if backup_error:
+        return backup_error
     users = load_user_store()
     user = find_user_by_id(users, user_id)
     if not user:
@@ -4450,20 +4617,26 @@ def delete_staff(user_id: str):
         return jsonify({"error": "Cannot permanently remove Owner or Super Admin."}), 400
     if not is_global_manager(auth_user) and not is_susu_agent(user):
         return jsonify({"error": "Supervisors can only remove SUSU agents."}), 403
-    user["isArchived"] = True
-    user["isActive"] = False
-    user["removedAt"] = now_ms()
-    user["removedBy"] = auth_user["id"]
+    removed_snapshot = staff_audit_target(user)
     pending = load_pending_verifications()
     pending.pop(user["email"], None)
-    save_user_store(users)
+    passwords = load_password_store()
+    passwords.pop(str(user.get("email", "")).strip().lower(), None)
+    username = str(user.get("loginUsername", "")).strip().lower()
+    if username:
+        passwords.pop(f"username:{username}", None)
+    presence = load_presence_store()
+    presence.pop(user_id, None)
+    save_user_store([item for item in users if item.get("id") != user_id])
     save_pending_verifications(pending)
+    save_password_store(passwords)
+    save_presence_store(presence)
     revoke_user_sessions(user_id)
-    record_audit_log(auth_user, "ARCHIVE_STAFF_FROM_REMOVE", staff_audit_target(user))
+    record_audit_log(auth_user, "DELETE_STAFF_ACCOUNT", removed_snapshot)
     notify_active_managers(
         kind="staff",
         title="Staff archived",
-        message=f"{auth_user['fullname']} archived {user['fullname']} from active access.",
+        message=f"{auth_user['fullname']} removed {user['fullname']}'s login account.",
         link_to="/past-staff",
     )
     return jsonify({"ok": True})
@@ -4597,6 +4770,9 @@ def auth_register():
             return jsonify({"error": "Public staff sign-up is currently disabled. Ask a supervisor or owner admin to add your account."}), 403
         email = validate_email(str(data.get("email", "")))
         password = str(data.get("passwordHash", ""))
+        requested_department = str(data.get("department", "")).strip().upper()
+        if requested_department in {"SUSU AGENT", "SUSU SUPERVISOR"}:
+            return jsonify({"error": "SUSU agent and supervisor accounts must be created by a supervisor or owner admin."}), 403
         department = normalize_portal_department_name(data.get("department"))
         branch = normalize_portal_branch_name(data.get("branch"))
         if not password:

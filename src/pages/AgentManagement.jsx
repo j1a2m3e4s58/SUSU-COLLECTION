@@ -158,7 +158,7 @@ export default function AgentManagement() {
     setDeletingSelected(true);
     setError('');
     try {
-      await Promise.all(selectedAgents.map((agent) => deleteStaff(agent.id)));
+      await Promise.all(selectedAgents.map((agent) => deleteStaff(agent.id, true)));
       await createAuditLog({
         action: 'agent_bulk_delete',
         target: `Deleted agents: ${selectedAgents.map((agent) => agent.fullname || agent.full_name).join(', ')}`,
@@ -365,7 +365,7 @@ export default function AgentManagement() {
     <div className="space-y-6">
       <div>
         <h1 className="font-heading text-2xl lg:text-3xl font-bold text-foreground flex items-center gap-2"><UserCog className="w-6 h-6 text-blue-500" /> Agent Management</h1>
-        <p className="text-sm text-muted-foreground mt-1">Manage SUSU agents, reassign branches, and monitor field performance</p>
+        <p className="text-sm text-muted-foreground mt-1">Manage SUSU agents, transfer branches, and monitor field performance</p>
       </div>
 
       {success && <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-sm text-emerald-500">{success}</div>}
@@ -448,7 +448,7 @@ export default function AgentManagement() {
                         </button>
                         <button onClick={() => { setTransferAgent(a); setNewBranch(''); setReason(''); setError(''); }}
                           className="inline-flex items-center gap-1 bg-blue-500/10 text-blue-500 text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-blue-500/20 transition-colors">
-                          <Building2 className="w-3 h-3" /> Reassign
+                          <Building2 className="w-3 h-3" /> Transfer Branch
                         </button>
                         <button onClick={() => handleReopenDay(a)} disabled={reopeningAgentId === a.id}
                           className="inline-flex items-center gap-1 bg-emerald-500/10 text-emerald-600 text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-emerald-500/20 transition-colors disabled:opacity-50">
@@ -490,7 +490,7 @@ export default function AgentManagement() {
                     </button>
                     <button onClick={() => { setTransferAgent(a); setNewBranch(''); setReason(''); setError(''); }}
                       className="rounded-lg bg-blue-500/10 px-3 py-1.5 text-xs font-medium text-blue-500">
-                      Reassign
+                      Transfer Branch
                     </button>
                     <button onClick={() => handleReopenDay(a)} disabled={reopeningAgentId === a.id}
                       className="rounded-lg bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-600 disabled:opacity-50">
@@ -599,11 +599,33 @@ export default function AgentManagement() {
               <button onClick={() => setShowCreateAgent(false)} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
             </div>
             <div className="space-y-3">
-              <input className={inputClass} value={agentForm.fullname} onChange={(e) => setAgentForm({ ...agentForm, fullname: e.target.value })} placeholder="Agent full name" />
-              <input className={inputClass} value={agentForm.username} onChange={(e) => setAgentForm({ ...agentForm, username: e.target.value })} placeholder="Username e.g. gabriel01" />
-              <input className={inputClass} value={agentForm.phone} onChange={(e) => setAgentForm({ ...agentForm, phone: e.target.value })} placeholder="Phone number used for verification" />
-              <input className={inputClass} value={agentForm.temporaryPassword} onChange={(e) => setAgentForm({ ...agentForm, temporaryPassword: e.target.value })} placeholder="Temporary password" />
-              <ControlledSelect value={agentForm.branch} onChange={(branch) => setAgentForm({ ...agentForm, branch })} options={scopedBranches} placeholder="Select branch" className={inputClass} />
+              <label className="block space-y-1.5">
+                <span className="text-xs font-semibold uppercase text-muted-foreground">Full Name</span>
+                <input autoComplete="off" className={inputClass} value={agentForm.fullname} onChange={(e) => setAgentForm({ ...agentForm, fullname: e.target.value })} placeholder="Agent full name" />
+              </label>
+              <label className="block space-y-1.5">
+                <span className="text-xs font-semibold uppercase text-muted-foreground">Username</span>
+                <input autoComplete="off" className={inputClass} value={agentForm.username} onChange={(e) => setAgentForm({ ...agentForm, username: e.target.value })} placeholder="Username e.g. gabriel01" />
+              </label>
+              <label className="block space-y-1.5">
+                <span className="text-xs font-semibold uppercase text-muted-foreground">Phone</span>
+                <input type="tel" autoComplete="off" inputMode="tel" className={inputClass} value={agentForm.phone} onChange={(e) => setAgentForm({ ...agentForm, phone: e.target.value })} placeholder="Phone number used for verification" />
+              </label>
+              <label className="block space-y-1.5">
+                <span className="text-xs font-semibold uppercase text-muted-foreground">Temporary Password</span>
+                <input type="password" autoComplete="new-password" className={inputClass} value={agentForm.temporaryPassword} onChange={(e) => setAgentForm({ ...agentForm, temporaryPassword: e.target.value })} placeholder="Temporary password" />
+              </label>
+              <div className="space-y-1.5">
+                <span className="text-xs font-semibold uppercase text-muted-foreground">Branch</span>
+                <ControlledSelect value={agentForm.branch} onChange={(branch) => setAgentForm({ ...agentForm, branch })} options={scopedBranches} placeholder="Select branch" className={inputClass} />
+              </div>
+              <div className="flex items-start gap-3 rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3">
+                <input type="checkbox" checked readOnly className="mt-0.5 h-4 w-4 accent-emerald-600" />
+                <div>
+                  <p className="text-sm font-medium text-foreground">Force reset on first login</p>
+                  <p className="text-xs text-muted-foreground">Required for every new agent account.</p>
+                </div>
+              </div>
               <div className="rounded-lg border border-blue-500/20 bg-blue-500/10 p-3 text-xs text-muted-foreground">
                 First login will ask the agent for this phone number, then generate a one-time setup token before their permanent password.
               </div>
@@ -611,7 +633,7 @@ export default function AgentManagement() {
                 <button onClick={() => setShowCreateAgent(false)} className="flex-1 rounded-lg bg-muted py-2.5 text-sm font-medium text-foreground hover:bg-muted/70">Cancel</button>
                 <button onClick={handleCreateAgent} disabled={saving} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-emerald-600 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">
                   {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                  Add
+                  Add Agent
                 </button>
               </div>
             </div>
@@ -689,14 +711,14 @@ export default function AgentManagement() {
               <button onClick={() => setResetTarget(null)} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
             </div>
             <div className="space-y-3">
-              <input className={inputClass} value={resetUsername} onChange={(e) => setResetUsername(e.target.value)} placeholder="Temporary username" />
-              <input className={inputClass} value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} placeholder="New temporary password" />
+              <input autoComplete="off" className={inputClass} value={resetUsername} onChange={(e) => setResetUsername(e.target.value)} placeholder="Temporary username" />
+              <input type="password" autoComplete="new-password" className={inputClass} value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} placeholder="New temporary password" />
               <p className="text-xs text-muted-foreground">The agent logs in with this temporary username/password, verifies phone, enters the generated setup token, then sets their permanent username and password.</p>
               <div className="flex gap-3 pt-2">
                 <button onClick={() => setResetTarget(null)} className="flex-1 rounded-lg bg-muted py-2.5 text-sm font-medium text-foreground hover:bg-muted/70">Cancel</button>
                 <button onClick={handleResetAgentPassword} disabled={saving || !resetUsername || !resetPassword} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-amber-600 py-2.5 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50">
                   {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
-                  Reset
+                  Reset Login
                 </button>
               </div>
             </div>
@@ -711,7 +733,7 @@ export default function AgentManagement() {
           <div className="relative max-h-[calc(100vh-2rem)] w-full max-w-md overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-2xl sm:p-6">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h2 className="font-heading text-lg font-bold text-foreground">Branch Transfer</h2>
+                <h2 className="font-heading text-lg font-bold text-foreground">Transfer Branch</h2>
                 <p className="text-sm text-muted-foreground">{transferAgent.fullname || transferAgent.full_name} - {transferAgent.branch || transferAgent.branch_name || 'Unassigned'}</p>
               </div>
               <button onClick={() => setTransferAgent(null)} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>

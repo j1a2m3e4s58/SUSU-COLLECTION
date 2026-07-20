@@ -16,6 +16,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { setStoredPortalControlPassword, unlockPortalControl } from '@/api/portalClient';
+import { canManageCustomers as canManageCustomerRecords, isOwnerAdmin, isSusuAgent as isAgentUser } from '@/lib/roles';
 
 export const navItems = [
   { label: 'Dashboard', path: '/', icon: LayoutDashboard },
@@ -40,13 +41,13 @@ export default function Sidebar({ isOpen, onClose, user, settings }) {
   const [unlockError, setUnlockError] = useState("");
   const [unlocking, setUnlocking] = useState(false);
 
-  const canManagePortal = user?.role === 'OwnerAdmin';
-  const canOwnerControl = user?.role === 'OwnerAdmin';
+  const canManagePortal = isOwnerAdmin(user);
+  const canOwnerControl = isOwnerAdmin(user);
   const canSupervise =
     canManagePortal ||
     (user?.role === 'Supervisor' && Array.isArray(user?.managedBranches) && user.managedBranches.length > 0);
-  const isSusuAgent = String(user?.department || '').trim().toUpperCase() === 'SUSU AGENT';
-  const canManageCustomers = user?.role === 'OwnerAdmin' || user?.role === 'Supervisor';
+  const isSusuAgent = isAgentUser(user);
+  const canManageCustomers = canManageCustomerRecords(user);
   const canManageAgents = canManageCustomers;
 
   const labelFor = (item) => {

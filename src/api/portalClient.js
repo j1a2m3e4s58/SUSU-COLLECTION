@@ -91,6 +91,13 @@ export async function updatePortalSettings(settings, password = getStoredPortalC
   return data.settings;
 }
 
+export async function normalizeLegacySusuDepartments(backupConfirmed = false, password = getStoredPortalControlPassword()) {
+  return apiRequest("/maintenance/normalize-susu-departments", {
+    method: "POST",
+    body: { backupConfirmed, password },
+  });
+}
+
 export async function unlockPortalControl(password) {
   return apiRequest("/portal-settings/unlock", {
     method: "POST",
@@ -154,10 +161,10 @@ export async function resetAgentPassword(userId, temporaryPassword, temporaryUse
   return normalizeUser(data.user);
 }
 
-export async function deleteStaff(userId) {
+export async function deleteStaff(userId, backupConfirmed = false) {
   return apiRequest(`/staff/${userId}/delete`, {
     method: "POST",
-    body: {},
+    body: { backupConfirmed },
   });
 }
 
@@ -242,17 +249,17 @@ export async function createAuditLog(payload) {
   return data.log;
 }
 
-export async function deleteAuditLog(itemId) {
+export async function deleteAuditLog(itemId, backupConfirmed = false) {
   return apiRequest(`/audit-logs/${itemId}/delete`, {
     method: "POST",
-    body: {},
+    body: { backupConfirmed },
   });
 }
 
-export async function deleteAuditLogs(itemIds) {
+export async function deleteAuditLogs(itemIds, backupConfirmed = false) {
   return apiRequest("/audit-logs/delete", {
     method: "POST",
-    body: { ids: itemIds },
+    body: { ids: itemIds, backupConfirmed },
   });
 }
 

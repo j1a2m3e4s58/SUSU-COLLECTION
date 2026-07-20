@@ -89,6 +89,15 @@ export default function Reports() {
   const [branchFilter, setBranchFilter] = useState('');
   const [reportData, setReportData] = useState([]);
   const [generating, setGenerating] = useState(false);
+  const scopeFileName = () => {
+    const type = selectedType || 'report';
+    const scope = dateFrom === dateTo ? (dateFrom || selectedDate) : `${dateFrom || 'start'}_to_${dateTo || 'end'}`;
+    const agent = selectedAgent
+      ? `_${String(selectedAgent.fullname || selectedAgent.full_name || 'agent').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '')}`
+      : '';
+    const branch = branchFilter ? `_${String(branchFilter).replace(/[^a-z0-9]+/gi, '-')}` : '';
+    return `${type}_${scope}${agent}${branch}`.toLowerCase();
+  };
 
   useEffect(() => {
     Promise.all([getCollections(), getPortalSettings()])
@@ -135,7 +144,7 @@ export default function Reports() {
     const blob = new Blob([csv], { type: 'text/csv' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `${selectedType}_report_${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `${scopeFileName()}.csv`;
     a.click();
   };
   const exportExcel = () => {
@@ -176,7 +185,7 @@ export default function Reports() {
     a.href = URL.createObjectURL(blob);
     a.download = isDailySubmission
       ? `daily_susu_submission_${dateFrom || selectedDate}.xls`
-      : `${selectedType}_report_${new Date().toISOString().split('T')[0]}.xls`;
+      : `${scopeFileName()}.xls`;
     a.click();
   };
   const exportWord = () => {
@@ -188,7 +197,7 @@ export default function Reports() {
     const blob = new Blob([html], { type: 'application/msword' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `${selectedType}_report_${new Date().toISOString().split('T')[0]}.doc`;
+    a.download = `${scopeFileName()}.doc`;
     a.click();
   };
   const exportPDF = () => {
@@ -206,7 +215,7 @@ export default function Reports() {
     exportHtmlPdf({
       title: reportLabel,
       subtitle: `Generated for ${selectedAgent ? `${selectedAgent.fullname || selectedAgent.full_name}, ` : ''}${selectedLabel}. Date range ${dateFrom || '-'} to ${dateTo || '-'}${branchFilter ? `, branch ${branchFilter}` : ', all branches'}.`,
-      filename: `${selectedType || 'report'}-${dateFrom || selectedDate}`,
+      filename: scopeFileName(),
       summary: [
         { label: 'Transactions', value: reportData.length },
         { label: 'Total Amount', value: `GHS ${totalAmount.toLocaleString()}` },

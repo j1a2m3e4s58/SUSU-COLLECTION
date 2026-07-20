@@ -16,11 +16,8 @@ import {
 } from "lucide-react";
 
 const defaultBranches = ["HEAD OFFICE", "BAWJIASE", "ADEISO", "OFAAKOR", "KASOA NEW MARKET", "KASOA MAIN"];
-const defaultDepartments = ["SUSU"];
-
 export default function Register() {
   const [branches, setBranches] = useState(defaultBranches);
-  const [departments, setDepartments] = useState(defaultDepartments);
   const [publicRegistrationEnabled, setPublicRegistrationEnabled] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [step, setStep] = useState("form");
@@ -28,7 +25,7 @@ export default function Register() {
     fullname: "",
     phone: "",
     email: "",
-    department: "",
+    department: "SUSU",
     branch: "",
     position: "Staff",
   });
@@ -45,14 +42,12 @@ export default function Register() {
       .then((settings) => {
         if (!mounted) return;
         setBranches(settings.branches?.length ? settings.branches : defaultBranches);
-        setDepartments(settings.departments?.length ? settings.departments : defaultDepartments);
         setPublicRegistrationEnabled(settings.publicRegistrationEnabled === true);
         setSettingsLoaded(true);
       })
       .catch(() => {
         if (!mounted) return;
         setBranches(defaultBranches);
-        setDepartments(defaultDepartments);
         setPublicRegistrationEnabled(false);
         setSettingsLoaded(true);
       })
@@ -276,16 +271,10 @@ export default function Register() {
             />
           </div>
           <div className="min-w-0 space-y-1">
-            <Label className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
-              Department
-            </Label>
-            <ControlledSelect
-              value={form.department}
-              onChange={(value) => update("department", value)}
-              options={departments}
-              placeholder="Select..."
-              className="h-8 rounded-lg border-primary/15 bg-background/70 text-sm shadow-sm backdrop-blur-sm dark:border-primary/20 dark:bg-card/70"
-            />
+            <Label className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">SUSU Department</Label>
+            <div className="flex h-8 items-center rounded-lg border border-primary/15 bg-background/70 px-3 text-sm font-medium text-foreground shadow-sm backdrop-blur-sm dark:border-primary/20 dark:bg-card/70">
+              SUSU
+            </div>
           </div>
         </div>
 

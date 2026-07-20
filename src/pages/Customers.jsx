@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { getCollections, getCustomers, getPortalSettings } from '@/api/portalClient';
+import { getCollections, getCustomerImports, getCustomers, getPortalSettings } from '@/api/portalClient';
 import ControlledSelect from '@/components/ui/controlled-select';
-import { CalendarDays, Pencil, Phone, Plus, RefreshCw, Search, UserX, Users } from 'lucide-react';
+import { CalendarDays, FileSpreadsheet, Pencil, Phone, Plus, RefreshCw, Search, UserX, Users } from 'lucide-react';
 import { useWorkDate } from '@/lib/WorkDateContext';
 import { useAgentScope } from '@/lib/AgentScopeContext';
 import AddCustomerDialog from '@/components/customers/AddCustomerDialog';
@@ -19,6 +19,7 @@ export default function Customers() {
   const { selectedDate, selectedMonth, selectedScope, selectedLabel } = useWorkDate();
   const { canUseAgentScope, selectedAgent, matchesSelectedAgent } = useAgentScope();
   const [customers, setCustomers] = useState([]);
+  const [importHistory, setImportHistory] = useState([]);
   const [collections, setCollections] = useState([]);
   const [branches, setBranches] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -31,12 +32,14 @@ export default function Customers() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [customerData, collectionData, settings] = await Promise.all([
+      const [customerData, collectionData, settings, imports] = await Promise.all([
         getCustomers(),
         getCollections(),
         getPortalSettings(),
+        getCustomerImports().catch(() => []),
       ]);
       setCustomers(customerData || []);
+      setImportHistory(imports || []);
       setCollections(collectionData || []);
       setBranches(settings?.branches?.length ? settings.branches : defaultBranches);
     } catch {}
@@ -240,6 +243,45 @@ export default function Customers() {
         </div>
         {!loading && <p className="mt-3 px-3 text-xs text-muted-foreground">{filtered.length} active customer(s)</p>}
       </div>}
+
+      <section className="rounded-xl border border-border bg-card p-4 sm:p-5">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="flex items-center gap-2 font-heading text-base font-bold text-foreground">
+              <FileSpreadsheet className="h-5 w-5 text-emerald-500" />
+              Customer Import History
+            </h2>
+            <p className="mt-1 text-xs text-muted-foreground">Uploaded customer batches for the selected branch scope.</p>
+          </div>
+          <button type="button" onClick={fetchData} className="inline-flex items-center justify-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-medium text-foreground hover:bg-muted">
+            <RefreshCw className="h-3.5 w-3.5" /> Refresh
+          </button>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {importHistory.filter((item) => !branchFilter || item.branch === branchFilter).length === 0 ? (
+            <div className="rounded-lg border border-dashed border-border p-5 text-sm text-muted-foreground md:col-span-2 xl:col-span-3">
+              No customer imports recorded for this branch.
+            </div>
+          ) : importHistory
+            .filter((item) => !branchFilter || item.branch === branchFilter)
+            .slice(0, 12)
+            .map((item) => (
+              <article key={item.id} className="rounded-lg border border-border bg-background/50 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-foreground">{item.branch || 'Branch'}</p>
+                    <p className="text-xs text-muted-foreground">{item.uploadedAt ? new Date(item.uploadedAt).toLocaleString() : '-'}</p>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-600">
+                    {item.createdCount || 0} added
+                  </span>
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">Uploaded by {item.uploadedBy || 'Unknown'}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{item.skippedCount || 0} skipped row(s)</p>
+              </article>
+            ))}
+        </div>
+      </section>
 
       <AddCustomerDialog open={showAdd} onClose={() => setShowAdd(false)} branches={branches} onSaved={() => { setShowAdd(false); fetchData(); }} />
       <EditCustomerDialog open={Boolean(editTarget)} customer={editTarget} branches={branches} onClose={() => setEditTarget(null)} onSaved={() => { setEditTarget(null); fetchData(); }} />

@@ -1,97 +1,90 @@
-﻿# Base44 Project
+# SUSU Collection Portal
 
-Use this repository to run and edit the app locally, then publish changes back through Base44.
+Branch-scoped SUSU customer and deposit management for Bawjiase Community Bank. The frontend is React/Vite and the API is Flask. Production deployments use PostgreSQL through `DATABASE_URL`.
 
-Any change pushed to the repo will also be reflected in the Base44 Builder.
+## Requirements
 
-## Prerequisites
+- Node.js 20 or newer
+- Python 3.12 (the deployed version is pinned in `runtime.txt`)
+- PostgreSQL for production
 
-1. Clone the repository using the project's Git URL.
-2. Navigate to the project directory.
-3. Install dependencies: `npm install`.
-4. Install the Base44 CLI: `npm install -g base44@latest`.
+## Local Setup
 
-See the [Base44 CLI docs](https://docs.base44.com/developers/references/cli/get-started/overview) if you want to run Base44 commands directly.
+Install dependencies from the project root:
 
-## Run Locally
-
-Run the full local development environment from the project root:
-
-```bash
-base44 dev
+```powershell
+npm install
+python -m pip install -r mail-api/requirements.txt
 ```
 
-`base44 dev` starts the local Base44 development backend and, when this app is configured for it, also starts the frontend dev server for you. Use the frontend URL printed by the command.
+Set local backend values in `mail-api/.env` or in the current shell. Never commit real passwords or mail credentials.
 
-For example, when the Base44 project config includes a `serveCommand`, `base44 dev` can launch the frontend too:
-
-```json5
-{
-  "site": {
-    "serveCommand": "npm run dev"
-  }
-}
+```text
+PORT=4190
+PORTAL_DEFAULT_INITIAL_PASSWORD=local-test-password
+PORTAL_CONTROL_PASSWORD=local-portal-control-password
+PORTAL_PUBLIC_URL=http://127.0.0.1:5173
+ALLOWED_ORIGINS=http://127.0.0.1:5173
 ```
 
-In a Base44 project this lives in `base44/config.jsonc`.
+Start the backend:
 
-## Run Only The Frontend
+```powershell
+Set-Location mail-api
+python app.py
+```
 
-If you only want to work on the frontend against the hosted Base44 backend, run:
+Start the frontend in another terminal:
 
-```bash
+```powershell
 npm run dev
 ```
 
-Open the local URL printed by Vite.
+The Vite proxy targets `http://127.0.0.1:4190` by default. To use another local backend port, set `VITE_DEV_API_TARGET` before running Vite.
 
-## Use The Hosted Backend
+## Checks
 
-For frontend-only development, create or update `.env.local` in the project root:
+Run these before committing:
 
-```bash
-VITE_BASE44_APP_ID=your_app_id
-VITE_BASE44_APP_BASE_URL=https://your-app.base44.app
+```powershell
+npx eslint src/components src/pages --quiet
+npm run build
+python -m pytest mail-api/tests/test_security_hardening.py -q
+python -m py_compile mail-api/app.py
 ```
 
-`VITE_BASE44_APP_ID` identifies the Base44 app.
+## Render Deployment
 
-`VITE_BASE44_APP_BASE_URL` tells the Base44 Vite plugin where to send local `/api` requests. Point it at your deployed Base44 app URL when you want the local frontend to use the hosted backend.
+The included `render.yaml` provisions the Flask web service and managed PostgreSQL database. Connect the GitHub repository in Render and apply the Blueprint.
 
-When you use `base44 dev`, the command injects the local Base44 values for you, so `.env.local` is mainly needed for frontend-only workflows.
+Configure all required secrets in Render:
 
-## Publish Your Changes
+- `PORTAL_DEFAULT_INITIAL_PASSWORD`
+- `PORTAL_CONTROL_PASSWORD`
+- `PORTAL_PUBLIC_URL`
+- `ALLOWED_ORIGINS`
+- `MAIL_SERVER`
+- `MAIL_PORT`
+- `MAIL_USERNAME`
+- `MAIL_PASSWORD`
+- `MAIL_DEFAULT_SENDER`
+- `SMS_WEBHOOK_URL`
+- `SMS_WEBHOOK_API_KEY` when required by the SMS provider
 
-After pushing your changes to git, open the Base44 dashboard and publish the app:
+`DATABASE_URL` is supplied by the managed PostgreSQL service in the Blueprint. Do not switch the portal to Live Mode until Portal Control reports PostgreSQL, public URL, portal password, mail, and SMS as ready.
 
-```bash
-base44 dashboard open
-```
+## Production Checklist
 
-## SUSU Portal Production Readiness
+1. Export a full Owner backup and store it outside Render.
+2. Confirm automatic PostgreSQL backups are enabled and test one restore.
+3. Test Owner Admin, Supervisor, and SUSU Agent accounts separately.
+4. Confirm Supervisors see only their assigned branches.
+5. Confirm Agents cannot add customers or view another Agent's deposits.
+6. Import customers using `Account Name`, `Account Number`, and `Branch` columns.
+7. Confirm every account number is exactly 13 digits.
+8. Record a test deposit and verify duplicate/idempotency protection.
+9. Verify Daily, Agent, Branch, Audit, PDF, and Excel exports.
+10. Complete the 400px mobile pass for login, dashboard, collection, customers, directory, transactions, reports, profile, and Portal Control.
+11. Switch from Test Mode to Live Mode only after every production check passes.
 
-Before using the portal for real deposits:
-
-1. Export a full backup from **Portal Control**.
-2. Set `DATABASE_URL` to a managed PostgreSQL database. When present, portal stores are kept in the `portal_store` table and critical financial writes use a PostgreSQL advisory lock across workers.
-3. Set `PORTAL_PUBLIC_URL` to the exact deployed HTTPS site URL. Password reset links are always generated from this trusted URL.
-4. Set `PORTAL_CONTROL_PASSWORD` as a private backend environment variable. Portal Control, backup restore, and Live Mode changes depend on it.
-5. Configure `MAIL_SERVER`, `MAIL_USERNAME`, `MAIL_PASSWORD`, and `MAIL_DEFAULT_SENDER` for verification/reset email.
-6. Configure `SMS_WEBHOOK_URL` and optional `SMS_WEBHOOK_API_KEY` before Live Mode so agent setup tokens are delivered by SMS instead of displayed for testing.
-7. Export and store backups outside the app host. For production, schedule daily PostgreSQL backups in Render/cPanel and test restoring one backup before launch.
-8. Test these accounts separately: Owner Admin, Supervisor, and SUSU AGENT.
-9. Test customer import with CSV/XLSX columns: `Account Name`, `Account Number`, `Branch`.
-10. Confirm every customer account number is exactly 13 digits.
-11. Confirm SUSU AGENT users can record deposits only by exact account number search and cannot add customers.
-12. Confirm supervisors can see and manage only their branch agents/customers.
-13. Switch **Test Mode** to **Live Mode** only after Portal Control production checks pass.
-
-For Render deploys, push to GitHub and use **Manual Deploy -> Deploy latest commit** if automatic deploy does not start. The included `render.yaml` provisions a paid starter web service and a managed PostgreSQL database; review costs before applying it.
-
-## Docs & Support
-
-Documentation: [https://docs.base44.com/Integrations/Using-GitHub](https://docs.base44.com/Integrations/Using-GitHub)
-
-Base44 CLI command reference: [https://docs.base44.com/developers/references/cli/commands/introduction](https://docs.base44.com/developers/references/cli/commands/introduction)
-
-Support: [https://app.base44.com/support](https://app.base44.com/support)
+For a manual Render release, use **Manual Deploy > Deploy latest commit** after pushing to GitHub.

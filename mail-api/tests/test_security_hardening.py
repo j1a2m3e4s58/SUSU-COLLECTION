@@ -95,3 +95,321 @@ def test_default_password_seeds_initial_staff(monkeypatch, tmp_path):
     })
     assert response.status_code == 200
     assert response.get_json()["user"]["email"] == "jbruku@bawjiasecommunitybank.com"
+
+
+def auth_headers(app_module, user_id):
+    token = app_module.issue_session(user_id)
+    return {"Authorization": f"Bearer {token}"}
+
+
+def save_test_users(app_module, *users):
+    owner = app_module.normalize_user(app_module.OWNER_ADMIN_USER)
+    normalized = [owner, *[app_module.normalize_user(user) for user in users]]
+    app_module.save_user_store(normalized)
+    return normalized
+
+
+def test_owner_cleanup_permanently_normalizes_legacy_susu_departments(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    legacy_user = {
+        "id": "legacy-agent",
+        "fullname": "Legacy Agent",
+        "phone": "0240000001",
+        "email": "legacy@agents.local",
+        "role": "GeneralStaff",
+        "department": "SUSU AGENT",
+        "branch": "BAWJIASE",
+        "isActive": True,
+        "isVerified": True,
+    }
+    app_module.atomic_write_json(app_module.USERS_STORE_PATH, [legacy_user])
+    owner = app_module.load_user_store()[0]
+    client = app_module.app.test_client()
+    headers = auth_headers(app_module, owner["id"])
+    backup_response = client.get("/api/backup/export", headers=headers)
+    assert backup_response.status_code == 200
+    response = client.post(
+        "/api/maintenance/normalize-susu-departments",
+        json={
+            "password": "SecretPortalPassword123",
+            "backupConfirmed": True,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    stored = app_module.read_json_file(app_module.USERS_STORE_PATH, [])
+    assert any(user.get("id") == "legacy-agent" and user.get("department") == "SUSU" for user in stored)
+    assert all(user.get("department") not in {"SUSU AGENT", "SUSU SUPERVISOR"} for user in stored)
+
+
+def test_portal_branch_removal_requires_backup(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    owner = app_module.load_user_store()[0]
+    settings = app_module.load_portal_settings_store()
+    client = app_module.app.test_client()
+    response = client.post(
+        "/api/portal-settings",
+        json={
+            **settings,
+            "branches": settings["branches"][:-1],
+            "password": "SecretPortalPassword123",
+            "backupConfirmed": False,
+        },
+        headers=auth_headers(app_module, owner["id"]),
+    )
+    assert response.status_code == 400
+    assert "Export a backup" in response.get_json()["error"]
+
+
+def test_portal_control_password_is_case_sensitive(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    owner = app_module.load_user_store()[0]
+    client = app_module.app.test_client()
+    response = client.post(
+        "/api/portal-settings/unlock",
+        json={"password": "secretportalpassword123"},
+        headers=auth_headers(app_module, owner["id"]),
+    )
+    assert response.status_code == 403
+
+
+def test_supervisor_is_limited_to_agents_in_managed_branch(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    supervisor = {
+        "id": "supervisor-1",
+        "fullname": "Branch Supervisor",
+        "phone": "0240000002",
+        "email": "supervisor@bawjiasecommunitybank.com",
+        "role": "Supervisor",
+        "department": "SUSU",
+        "branch": "BAWJIASE",
+        "managedBranches": ["BAWJIASE"],
+        "managedDepartmentsByBranch": {"BAWJIASE": ["ALL"]},
+        "isActive": True,
+        "isVerified": True,
+    }
+    save_test_users(app_module, supervisor)
+    client = app_module.app.test_client()
+    headers = auth_headers(app_module, "supervisor-1")
+    denied = client.post(
+        "/api/agents/create",
+        json={
+            "fullname": "Wrong Branch Agent",
+            "username": "wrongbranch",
+            "phone": "0240000003",
+            "temporaryPassword": "TempPass123!",
+            "branch": "OFAAKOR",
+        },
+        headers=headers,
+    )
+    assert denied.status_code == 400
+    allowed = client.post(
+        "/api/agents/create",
+        json={
+            "fullname": "Own Branch Agent",
+            "username": "ownbranch",
+            "phone": "0240000004",
+            "temporaryPassword": "TempPass123!",
+            "branch": "BAWJIASE",
+        },
+        headers=headers,
+    )
+    assert allowed.status_code == 200
+    assert allowed.get_json()["user"]["branch"] == "BAWJIASE"
+
+
+def test_supervisor_backup_is_limited_to_managed_branch(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    supervisor = {
+        "id": "supervisor-1",
+        "fullname": "Branch Supervisor",
+        "phone": "0240000002",
+        "email": "supervisor@bawjiasecommunitybank.com",
+        "role": "Supervisor",
+        "department": "SUSU",
+        "branch": "BAWJIASE",
+        "managedBranches": ["BAWJIASE"],
+        "isActive": True,
+        "isVerified": True,
+    }
+    save_test_users(app_module, supervisor)
+    app_module.save_json_list_store(app_module.CUSTOMERS_STORE_PATH, [
+        {"id": "own", "account_number": "1310000100101", "branch_name": "BAWJIASE"},
+        {"id": "other", "account_number": "1310000100102", "branch_name": "OFAAKOR"},
+    ])
+    client = app_module.app.test_client()
+    response = client.get(
+        "/api/backup/export",
+        headers=auth_headers(app_module, "supervisor-1"),
+    )
+    assert response.status_code == 200
+    backup = response.get_json()
+    assert [item["id"] for item in backup["stores"]["customers"]] == ["own"]
+    assert backup["stores"]["passwords"] == {}
+    assert "BAWJIASE" in backup["metadata"]["scope"]
+
+    restore = client.post(
+        "/api/backup/import",
+        json={**backup, "password": "SecretPortalPassword123"},
+        headers=auth_headers(app_module, app_module.OWNER_ADMIN_USER["id"]),
+    )
+    assert restore.status_code == 400
+    assert "Branch-scoped backups are export-only" in restore.get_json()["error"]
+
+
+def test_staff_delete_requires_a_recent_server_recorded_backup(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    supervisor = {
+        "id": "supervisor-1",
+        "fullname": "Branch Supervisor",
+        "phone": "0240000002",
+        "email": "supervisor@bawjiasecommunitybank.com",
+        "role": "Supervisor",
+        "department": "SUSU",
+        "branch": "BAWJIASE",
+        "managedBranches": ["BAWJIASE"],
+        "isActive": True,
+        "isVerified": True,
+    }
+    agent = {
+        "id": "agent-delete",
+        "fullname": "Agent Delete",
+        "phone": "0240000003",
+        "email": "agent-delete@agents.local",
+        "role": "GeneralStaff",
+        "department": "SUSU",
+        "branch": "BAWJIASE",
+        "isActive": True,
+        "isVerified": True,
+    }
+    save_test_users(app_module, supervisor, agent)
+    client = app_module.app.test_client()
+    headers = auth_headers(app_module, "supervisor-1")
+    denied = client.post(
+        "/api/staff/agent-delete/delete",
+        json={"backupConfirmed": True},
+        headers=headers,
+    )
+    assert denied.status_code == 400
+    assert "fresh backup" in denied.get_json()["error"]
+    assert client.get("/api/backup/export", headers=headers).status_code == 200
+    allowed = client.post(
+        "/api/staff/agent-delete/delete",
+        json={"backupConfirmed": True},
+        headers=headers,
+    )
+    assert allowed.status_code == 200
+
+
+def test_legacy_supervisor_inherits_saved_branch_scope(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    supervisor = app_module.normalize_user({
+        "id": "legacy-supervisor",
+        "fullname": "Legacy Supervisor",
+        "phone": "0240000099",
+        "email": "legacy-supervisor@bawjiasecommunitybank.com",
+        "role": "Supervisor",
+        "department": "SUSU",
+        "branch": "BAWJIASE",
+        "managedBranches": [],
+        "isActive": True,
+        "isVerified": True,
+    })
+    assert supervisor["managedBranches"] == ["BAWJIASE"]
+    assert app_module.is_assigned_supervisor(supervisor)
+    assert app_module.branch_allowed_for_user(supervisor, "BAWJIASE")
+    assert not app_module.branch_allowed_for_user(supervisor, "OFAAKOR")
+
+
+def test_agent_cannot_add_customer_or_view_other_agents_collections(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    agent = {
+        "id": "agent-1",
+        "fullname": "Agent One",
+        "phone": "0240000005",
+        "email": "agentone@agents.local",
+        "role": "GeneralStaff",
+        "department": "SUSU",
+        "branch": "BAWJIASE",
+        "isActive": True,
+        "isVerified": True,
+    }
+    save_test_users(app_module, agent)
+    app_module.save_json_list_store(app_module.COLLECTIONS_STORE_PATH, [{
+        "id": "other-collection",
+        "customer_id": "customer-2",
+        "account_number": "1310000100010",
+        "amount": 25,
+        "agent_id": "agent-2",
+        "agent_name": "Agent Two",
+        "branch_name": "BAWJIASE",
+        "transaction_date": "2026-07-20",
+        "created_date": 1,
+    }])
+    client = app_module.app.test_client()
+    headers = auth_headers(app_module, "agent-1")
+    create_response = client.post(
+        "/api/customers",
+        json={"account_name": "Blocked", "account_number": "1310000100011", "branch_name": "BAWJIASE"},
+        headers=headers,
+    )
+    assert create_response.status_code == 403
+    collections_response = client.get("/api/collections", headers=headers)
+    assert collections_response.status_code == 200
+    assert collections_response.get_json()["collections"] == []
+
+
+def test_collection_enforces_branch_account_and_duplicate_protection(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    agent = {
+        "id": "agent-1",
+        "fullname": "Agent One",
+        "phone": "0240000005",
+        "email": "agentone@agents.local",
+        "role": "GeneralStaff",
+        "department": "SUSU",
+        "branch": "BAWJIASE",
+        "isActive": True,
+        "isVerified": True,
+    }
+    save_test_users(app_module, agent)
+    app_module.save_json_list_store(app_module.CUSTOMERS_STORE_PATH, [
+        {
+            "id": "customer-own",
+            "account_name": "Own Customer",
+            "account_number": "1310000100020",
+            "branch_name": "BAWJIASE",
+            "customer_status": "active",
+            "total_deposits": 0,
+        },
+        {
+            "id": "customer-other",
+            "account_name": "Other Customer",
+            "account_number": "1310000100021",
+            "branch_name": "OFAAKOR",
+            "customer_status": "active",
+            "total_deposits": 0,
+        },
+        {
+            "id": "customer-invalid",
+            "account_name": "Invalid Customer",
+            "account_number": "12345",
+            "branch_name": "BAWJIASE",
+            "customer_status": "active",
+            "total_deposits": 0,
+        },
+    ])
+    client = app_module.app.test_client()
+    headers = auth_headers(app_module, "agent-1")
+    wrong_branch = client.post("/api/collections", json={"customer_id": "customer-other", "amount": 10, "idempotency_key": "wrong-branch"}, headers=headers)
+    assert wrong_branch.status_code == 403
+    invalid_account = client.post("/api/collections", json={"customer_id": "customer-invalid", "amount": 10, "idempotency_key": "invalid-account"}, headers=headers)
+    assert invalid_account.status_code == 409
+    first = client.post("/api/collections", json={"customer_id": "customer-own", "amount": 10, "idempotency_key": "deposit-1"}, headers=headers)
+    assert first.status_code == 200
+    replay = client.post("/api/collections", json={"customer_id": "customer-own", "amount": 10, "idempotency_key": "deposit-1"}, headers=headers)
+    assert replay.status_code == 200
+    assert replay.get_json()["idempotent"] is True
+    duplicate = client.post("/api/collections", json={"customer_id": "customer-own", "amount": 12, "idempotency_key": "deposit-2"}, headers=headers)
+    assert duplicate.status_code == 400
+    assert "already has a completed deposit" in duplicate.get_json()["error"]

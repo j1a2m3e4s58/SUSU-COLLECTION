@@ -6,6 +6,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import ControlledSelect from "@/components/ui/controlled-select";
 import { Input } from "@/components/ui/input";
 import { getActiveStaff, getPortalSettings, updateStaff } from "@/api/portalClient";
+import { isSusuStaff } from "@/lib/roles";
 import {
   ArrowLeft,
   ArrowRightLeft,
@@ -46,7 +47,7 @@ export default function SupervisorManagement() {
         const [settings, users] = await Promise.all([getPortalSettings(), getActiveStaff()]);
         if (!mounted) return;
         setBranches(settings.branches || []);
-        const visibleUsers = (users || []).filter((member) => member.role !== "OwnerAdmin");
+        const visibleUsers = (users || []).filter((member) => member.role !== "OwnerAdmin" && isSusuStaff(member));
         setStaff(visibleUsers);
         setSelectedId((current) => current || visibleUsers[0]?.id || "");
       } catch (err) {
@@ -254,11 +255,11 @@ export default function SupervisorManagement() {
                     <div className="min-w-0">
                       <p className="truncate text-sm font-semibold text-foreground">{member.fullname}</p>
                       <p className="truncate text-xs text-muted-foreground">
-                        {member.branch} - {member.role === "Supervisor" ? "SUSU Supervisor" : "SUSU Staff"}
+                        {member.branch} - {member.role === "Supervisor" ? "SUSU Supervisor" : "SUSU Agent"}
                       </p>
                     </div>
                     <Badge variant={member.role === "Supervisor" ? "default" : "outline"}>
-                      {member.role === "Supervisor" ? "Supervisor" : "Staff"}
+                      {member.role === "Supervisor" ? "Supervisor" : "Agent"}
                     </Badge>
                   </div>
                 </button>
@@ -325,12 +326,12 @@ export default function SupervisorManagement() {
                 <div className="space-y-4 rounded-xl border border-border bg-card p-5">
                   <div>
                     <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      Role
+                      SUSU Access Type
                     </label>
                     <ControlledSelect
                       value={role}
                       onChange={setRole}
-                      options={[{ value: 'GeneralStaff', label: 'SUSU Staff' }, { value: 'Supervisor', label: 'SUSU Branch Supervisor' }]}
+                      options={[{ value: 'GeneralStaff', label: 'SUSU Agent' }, { value: 'Supervisor', label: 'SUSU Branch Supervisor' }]}
                       className="rounded-lg border-border bg-background text-sm"
                     />
                   </div>

@@ -20,6 +20,7 @@ import {
   getProductionStatus,
   getStoredPortalControlPassword,
   importBackup,
+  normalizeLegacySusuDepartments,
   removeTestCustomers,
   seedTestCustomers,
   updatePortalSettings,
@@ -29,7 +30,6 @@ import { Building2, Download, ListPlus, Pencil, Plus, RotateCcw, Save, Settings2
 
 const listControls = [
   ["branches", "Branches", "Branch", "Add branch name", []],
-  ["departments", "Departments", "Department", "Add department name", ["SUSU"]],
 ];
 
 const textFields = [
@@ -296,6 +296,7 @@ export default function PortalControl() {
   const [clearing, setClearing] = useState(false);
   const [seedingCustomers, setSeedingCustomers] = useState(false);
   const [removingTestCustomers, setRemovingTestCustomers] = useState(false);
+  const [normalizingLegacy, setNormalizingLegacy] = useState(false);
   const [clearBackupReady, setClearBackupReady] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -334,12 +335,9 @@ export default function PortalControl() {
   const hasDangerousListChanges = () => {
     const currentBranches = cleanList(settings?.branches || []);
     const nextBranches = cleanList(draft?.branches || []);
-    const currentDepartments = cleanList(settings?.departments || []);
-    const nextDepartments = cleanList(draft?.departments || []);
     const branchRemoved = currentBranches.some((item) => !nextBranches.includes(item));
-    const departmentRemoved = currentDepartments.some((item) => !nextDepartments.includes(item));
-    const hasRenames = Object.keys(pendingRenames.branches || {}).length > 0 || Object.keys(pendingRenames.departments || {}).length > 0;
-    return branchRemoved || departmentRemoved || hasRenames;
+    const hasRenames = Object.keys(pendingRenames.branches || {}).length > 0;
+    return branchRemoved || hasRenames;
   };
   const recordRename = (key, from, to) => {
     const oldValue = String(from || "").trim().toUpperCase();
@@ -395,7 +393,7 @@ export default function PortalControl() {
     const payload = {
       ...draft,
       branches: cleanList(draft.branches),
-      departments: cleanList(draft.departments),
+      departments: ["SUSU"],
       branchRenames: pendingRenames.branches,
       departmentRenames: pendingRenames.departments,
       formCategories: [],
@@ -404,6 +402,7 @@ export default function PortalControl() {
       transferLocations: [],
       appMode: draft.appMode === "live" ? "live" : "test",
       publicRegistrationEnabled: draft.publicRegistrationEnabled === true,
+      backupConfirmed: clearBackupReady,
     };
 
     setSaving(true);
@@ -415,7 +414,7 @@ export default function PortalControl() {
       setDraft(updated);
       setPendingRenames({ branches: {}, departments: {} });
       await refreshPortalSettings?.();
-      setSuccess("SUSU system settings saved. Branches and departments now apply across registration, directory, branches, reports, and the app shell.");
+      setSuccess("SUSU system settings saved. Branches and labels now apply across registration, directory, reports, and the app shell.");
     } catch (err) {
       setError(err.message || "Could not save portal settings");
     } finally {
@@ -534,6 +533,30 @@ export default function PortalControl() {
       setError(err.message || "Could not remove test customers.");
     } finally {
       setRemovingTestCustomers(false);
+    }
+  };
+
+  const normalizeLegacyData = async () => {
+    if (!clearBackupReady) {
+      setError("Export Backup before normalizing legacy SUSU data.");
+      return;
+    }
+    setNormalizingLegacy(true);
+    setError("");
+    setSuccess("");
+    try {
+      const result = await normalizeLegacySusuDepartments(true);
+      if (result.settings) {
+        setSettings(result.settings);
+        setDraft(result.settings);
+      }
+      await refreshPortalSettings?.();
+      setClearBackupReady(false);
+      setSuccess(`Legacy SUSU cleanup completed. ${result.normalizedUsers || 0} stored staff record(s) were permanently normalized.`);
+    } catch (err) {
+      setError(err.message || "Could not normalize legacy SUSU data.");
+    } finally {
+      setNormalizingLegacy(false);
     }
   };
 
@@ -658,6 +681,10 @@ export default function PortalControl() {
               <X className="h-4 w-4" />
               {removingTestCustomers ? "Removing..." : "Remove Test Customers"}
             </Button>
+            <Button type="button" variant="outline" className="gap-2 bg-background/70" onClick={normalizeLegacyData} disabled={normalizingLegacy || !clearBackupReady}>
+              <RotateCcw className="h-4 w-4" />
+              {normalizingLegacy ? "Normalizing..." : "Normalize Legacy SUSU Data"}
+            </Button>
             <Button type="button" variant="destructive" className="gap-2" onClick={clearTestingData} disabled={clearing || !clearBackupReady || draft.appMode !== "test"}>
               <Trash2 className="h-4 w-4" />
               {clearing ? "Clearing..." : "Clear Test Data"}
@@ -773,6 +800,14 @@ export default function PortalControl() {
           />
         ))}
       </div>
+
+      <section className="rounded-xl border border-border bg-card p-5">
+        <h2 className="font-heading text-base font-bold text-foreground">SUSU Staff Grouping</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          All operational staff use the SUSU department. Directory groups them as SUSU Supervisors or SUSU Agents from their role, not from separate department names.
+        </p>
+        <Badge className="mt-3">SUSU</Badge>
+      </section>
 
       {settings?.updatedBy && (
         <p className="text-xs text-muted-foreground">

@@ -12,6 +12,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { canManageCustomers as canManageCustomerRecords, isOwnerAdmin, isSusuAgent as isAgentUser } from '@/lib/roles';
 
 export default function Header({ onMenuClick, user }) {
   const { theme, toggleTheme } = useTheme();
@@ -29,10 +30,10 @@ export default function Header({ onMenuClick, user }) {
     ? displayName.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase()
     : 'U';
   const profileImage = resolveAssetUrl(user?.imageFile);
-  const canAdmin = user?.role === 'OwnerAdmin';
-  const canOwnerControl = user?.role === 'OwnerAdmin';
-  const canManageCustomers = user?.role === 'OwnerAdmin' || user?.role === 'Supervisor';
-  const isSusuAgent = String(user?.department || '').trim().toUpperCase() === 'SUSU AGENT';
+  const canAdmin = isOwnerAdmin(user);
+  const canOwnerControl = isOwnerAdmin(user);
+  const canManageCustomers = canManageCustomerRecords(user);
+  const isSusuAgent = isAgentUser(user);
   const managedBranches = Array.isArray(user?.managedBranches) && user.managedBranches.length
     ? user.managedBranches
     : [user?.branch].filter(Boolean);

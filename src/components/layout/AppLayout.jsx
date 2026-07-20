@@ -6,13 +6,14 @@ import { AgentScopeProvider } from '@/lib/AgentScopeContext';
 import Sidebar, { navItems } from './Sidebar';
 import Header from './Header';
 import AgentScopePanel from '@/components/agents/AgentScopePanel';
+import { canManageCustomers as canManageCustomerRecords, isSusuAgent as isAgentUser } from '@/lib/roles';
 
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { user, portalSettings } = useAuth();
   const location = useLocation();
-  const isSusuAgent = String(user?.department || '').trim().toUpperCase() === 'SUSU AGENT';
-  const canManageCustomers = user?.role === 'OwnerAdmin' || user?.role === 'Supervisor';
+  const isSusuAgent = isAgentUser(user);
+  const canManageCustomers = canManageCustomerRecords(user);
   const mobileNavPaths = isSusuAgent
     ? ['/', '/field-collection', '/transactions', '/directory', '/reports']
     : ['/', '/customers', '/agents', '/transactions', '/directory', '/reports'];

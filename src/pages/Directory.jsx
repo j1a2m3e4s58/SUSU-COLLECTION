@@ -18,6 +18,7 @@ import {
   archiveStaff,
   createAgentAccount,
   deleteStaff,
+  exportBackup,
   getActiveStaff,
   getPortalSettings,
   resolveAssetUrl,
@@ -54,10 +55,9 @@ function directoryDepartmentGroup(member) {
   return department || "Other";
 }
 
-function EditStaffDialog({ staff, branches, departments, open, onOpenChange, onSaved }) {
+function EditStaffDialog({ staff, branches, open, onOpenChange, onSaved }) {
   const [position, setPosition] = useState("");
   const [branch, setBranch] = useState("");
-  const [department, setDepartment] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -65,7 +65,6 @@ function EditStaffDialog({ staff, branches, departments, open, onOpenChange, onS
     if (!staff) return;
     setPosition(staff.position || "");
     setBranch(staff.branch || "HEAD OFFICE");
-    setDepartment(staff.department || "SUSU");
     setError("");
   }, [staff]);
 
@@ -77,7 +76,7 @@ function EditStaffDialog({ staff, branches, departments, open, onOpenChange, onS
       const updated = await updateStaff(staff.id, {
         position,
         branch,
-        department,
+        department: "SUSU",
       });
       onSaved(updated);
       onOpenChange(false);
@@ -94,7 +93,7 @@ function EditStaffDialog({ staff, branches, departments, open, onOpenChange, onS
         <DialogHeader>
           <DialogTitle>Update Staff Details</DialogTitle>
           <DialogDescription>
-            Update position, branch, or department for {staff?.fullname}.
+            Update the position or branch for {staff?.fullname}. SUSU access type is managed separately by role.
           </DialogDescription>
         </DialogHeader>
 
@@ -116,17 +115,6 @@ function EditStaffDialog({ staff, branches, departments, open, onOpenChange, onS
               onChange={setBranch}
               options={branches}
               placeholder="Select branch"
-              className="h-10 rounded-lg border-border bg-background text-sm"
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="edit-department">Department</Label>
-            <ControlledSelect
-              value={department}
-              onChange={setDepartment}
-              options={departments}
-              placeholder="Select department"
               className="h-10 rounded-lg border-border bg-background text-sm"
             />
           </div>
@@ -155,7 +143,6 @@ export default function Directory() {
   const { user } = useAuth();
   const [staff, setStaff] = useState([]);
   const [branches, setBranches] = useState([]);
-  const [departments, setDepartments] = useState([]);
   const [search, setSearch] = useState("");
   const [branch, setBranch] = useState("ALL");
   const [loading, setLoading] = useState(true);
@@ -165,6 +152,8 @@ export default function Directory() {
   const [archivingId, setArchivingId] = useState("");
   const [removingId, setRemovingId] = useState("");
   const [confirmAction, setConfirmAction] = useState(null);
+  const [removeBackupReady, setRemoveBackupReady] = useState(false);
+  const [exportingBackup, setExportingBackup] = useState(false);
   const [showAddAgent, setShowAddAgent] = useState(false);
   const [addingAgent, setAddingAgent] = useState(false);
   const [agentForm, setAgentForm] = useState({
@@ -183,7 +172,6 @@ export default function Directory() {
         const [settings, users] = await Promise.all([getPortalSettings(), getActiveStaff()]);
         if (!mounted) return;
         setBranches(settings.branches || []);
-        setDepartments(settings.departments?.length ? settings.departments : ["SUSU"]);
         setStaff((users || []).filter((member) => member.role !== "OwnerAdmin"));
         setError("");
       } catch (err) {
@@ -278,11 +266,15 @@ export default function Directory() {
   };
 
   const handleRemoveStaff = async (member) => {
+    if (!removeBackupReady) {
+      setError("Export a backup before removing this staff account.");
+      return;
+    }
     setRemovingId(member.id);
     setError("");
     setSuccess("");
     try {
-      await deleteStaff(member.id);
+      await deleteStaff(member.id, true);
       setStaff((current) => current.filter((item) => item.id !== member.id));
       setSuccess(`${member.fullname} has been removed from the system.`);
     } catch (err) {
@@ -290,6 +282,29 @@ export default function Directory() {
     } finally {
       setRemovingId("");
       setConfirmAction(null);
+    }
+  };
+
+  const exportRemovalBackup = async () => {
+    setExportingBackup(true);
+    setError("");
+    try {
+      const backup = await exportBackup();
+      const blob = new Blob([JSON.stringify(backup.data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = backup.filename || `susu-portal-backup-${Date.now()}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setRemoveBackupReady(true);
+      setSuccess("Backup exported. You can now remove this account.");
+    } catch (err) {
+      setError(err.message || "Could not export a backup.");
+    } finally {
+      setExportingBackup(false);
     }
   };
 
@@ -365,7 +380,7 @@ export default function Directory() {
                 }}
               >
                 <UserPlus className="h-4 w-4" />
-                Add User
+                Add Agent
               </Button>
             )}
           </div>
@@ -574,7 +589,10 @@ export default function Directory() {
                               size="sm"
                               className="h-7 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
                               disabled={removingId === member.id}
-                              onClick={() => setConfirmAction({ type: "remove", member })}
+                              onClick={() => {
+                                setRemoveBackupReady(false);
+                                setConfirmAction({ type: "remove", member });
+                              }}
                             >
                               <Trash2 className="mr-1 h-3.5 w-3.5" />
                               {removingId === member.id ? "Removing..." : "Remove"}
@@ -594,7 +612,6 @@ export default function Directory() {
       <EditStaffDialog
         staff={editTarget}
         branches={branches}
-        departments={departments}
         open={Boolean(editTarget)}
         onOpenChange={(open) => {
           if (!open) setEditTarget(null);
@@ -676,7 +693,7 @@ export default function Directory() {
                   Adding...
                 </>
               ) : (
-                "Add User"
+                "Add Agent"
               )}
             </Button>
           </DialogFooter>
@@ -697,6 +714,15 @@ export default function Directory() {
         confirmLabel={confirmAction?.type === "archive" ? "Archive" : "Remove"}
         destructive
         busy={Boolean(archivingId || removingId)}
+        confirmDisabled={confirmAction?.type === "remove" && !removeBackupReady}
+        secondaryLabel={confirmAction?.type === "remove" ? "Export Backup" : ""}
+        secondaryBusy={exportingBackup}
+        onSecondary={exportRemovalBackup}
+        notice={confirmAction?.type === "remove" ? (
+          removeBackupReady
+            ? "Backup exported. Financial records will remain, but this login account will be removed."
+            : "A backup is required before this login account can be removed."
+        ) : ""}
         onConfirm={() => {
           if (!confirmAction?.member) return;
           if (confirmAction.type === "archive") handleArchiveStaff(confirmAction.member);

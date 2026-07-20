@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { getActiveStaff } from '@/api/portalClient';
 import { useAuth } from '@/lib/AuthContext';
+import { isSusuAgent } from '@/lib/roles';
 
 const AgentScopeContext = createContext(null);
 const STORAGE_KEY = 'susu.selectedAgentId';
@@ -12,14 +13,11 @@ function normalize(value) {
 function isBranchAllowed(user, branch) {
   if (user?.role === 'OwnerAdmin') return true;
   if (user?.role !== 'Supervisor') return false;
-  const branches = (user.managedBranches || []).map(normalize);
+  const assigned = Array.isArray(user.managedBranches) && user.managedBranches.length
+    ? user.managedBranches
+    : [user.branch].filter(Boolean);
+  const branches = assigned.map(normalize);
   return branches.includes('ALL') || branches.includes(normalize(branch));
-}
-
-function isSusuAgent(user) {
-  const department = normalize(user?.department);
-  const role = String(user?.role || '').trim();
-  return ['SUSU', 'SUSU AGENT', 'SUSU SUPERVISOR'].includes(department) && !['Supervisor', 'OwnerAdmin', 'SuperAdmin'].includes(role);
 }
 
 export function AgentScopeProvider({ children }) {
