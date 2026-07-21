@@ -173,6 +173,14 @@ export async function resetAgentPassword(userId, temporaryPassword, temporaryUse
   return normalizeUser(data.user);
 }
 
+export async function resetStaffEmailLogin(userId, newPassword) {
+  const data = await apiRequest(`/staff/${userId}/reset-email-login`, {
+    method: "POST",
+    body: { newPassword },
+  });
+  return normalizeUser(data.user);
+}
+
 export async function deleteStaff(userId, backupConfirmed = false) {
   return apiRequest(`/staff/${userId}/delete`, {
     method: "POST",

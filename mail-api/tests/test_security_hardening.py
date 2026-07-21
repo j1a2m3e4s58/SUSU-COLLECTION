@@ -518,6 +518,34 @@ def test_session_uses_short_idle_and_absolute_expiry(monkeypatch, tmp_path):
     assert response.status_code == 401
 
 
+def test_owner_can_reset_directory_email_login_and_revoke_sessions(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    staff = {
+        "id": "staff-email-reset",
+        "fullname": "Directory Staff",
+        "phone": "0240000042",
+        "email": "directory.staff@bawjiasecommunitybank.com",
+        "role": "GeneralStaff",
+        "department": "SUSU",
+        "branch": "BAWJIASE",
+        "isActive": True,
+        "isVerified": True,
+    }
+    save_test_users(app_module, staff)
+    old_staff_token = app_module.issue_session(staff["id"])
+    owner = app_module.load_user_store()[0]
+    response = app_module.app.test_client().post(
+        f"/api/staff/{staff['id']}/reset-email-login",
+        json={"newPassword": "FreshLogin123!"},
+        headers=auth_headers(app_module, owner["id"]),
+    )
+    assert response.status_code == 200
+    passwords = app_module.load_password_store()
+    assert app_module.verify_password(passwords[staff["email"]], "FreshLogin123!")
+    assert app_module.session_token_hash(old_staff_token) not in app_module.load_sessions()
+    assert app_module.load_audit_logs_store()[0]["action"] == "RESET_STAFF_EMAIL_LOGIN"
+
+
 @pytest.mark.parametrize("path", [
     "/api/maintenance/clear-test-data",
     "/api/maintenance/remove-test-customers",

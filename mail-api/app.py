@@ -4724,6 +4724,44 @@ def reset_agent_password(user_id: str):
     return jsonify({"ok": True, "user": user})
 
 
+@app.route("/api/staff/<user_id>/reset-email-login", methods=["POST", "OPTIONS"])
+def reset_staff_email_login(user_id: str):
+    preflight = handle_options()
+    if preflight:
+        return preflight
+    session_token, auth_user, error = require_owner_admin()
+    if error:
+        return error
+    reauth_error = recent_reauthentication_error(session_token)
+    if reauth_error:
+        return reauth_error
+    data, error = require_json()
+    if error:
+        return error
+    new_password = str(data.get("newPassword") or "")
+    if len(new_password) < 8:
+        return jsonify({"error": "New password must be at least 8 characters."}), 400
+    users = load_user_store()
+    user = find_user_by_id(users, user_id)
+    if not user or user.get("isArchived"):
+        return jsonify({"error": "Active staff member not found."}), 404
+    if is_owner_admin(user):
+        return jsonify({"error": "Use Forgot Password to reset the owner account."}), 400
+    email = str(user.get("email") or "").strip().lower()
+    if not email or email.endswith("@agents.local"):
+        return jsonify({"error": "This account uses Agent username login. Reset it from Agent Management."}), 400
+    passwords = load_password_store()
+    passwords[email] = hash_password_for_storage(new_password)
+    save_password_store(passwords)
+    revoke_user_sessions(user["id"])
+    record_audit_log(
+        auth_user,
+        "RESET_STAFF_EMAIL_LOGIN",
+        staff_audit_target(user, {"email": email}),
+    )
+    return jsonify({"ok": True, "user": user})
+
+
 @app.route("/api/auth/register", methods=["POST", "OPTIONS"])
 def auth_register():
     preflight = handle_options()

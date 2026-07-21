@@ -21,11 +21,12 @@ import {
   exportBackup,
   getActiveStaff,
   getPortalSettings,
+  resetStaffEmailLogin,
   resolveAssetUrl,
   updateStaff,
 } from "@/api/portalClient";
 import { useAuth } from "@/lib/AuthContext";
-import { Archive, Building2, Loader2, Mail, MapPin, Phone, Search, ShieldCheck, Trash2, UserPlus, UserX, Users } from "lucide-react";
+import { Archive, Building2, KeyRound, Loader2, Mail, MapPin, Phone, Search, ShieldCheck, Trash2, UserPlus, UserX, Users } from "lucide-react";
 
 function initials(name) {
   return String(name || "User")
@@ -55,7 +56,7 @@ function directoryDepartmentGroup(member) {
   return department || "Other";
 }
 
-function EditStaffDialog({ staff, branches, open, onOpenChange, onSaved }) {
+function EditStaffDialog({ staff, branches, open, onOpenChange, onSaved, onResetLogin }) {
   const [position, setPosition] = useState("");
   const [branch, setBranch] = useState("");
   const [error, setError] = useState("");
@@ -126,13 +127,21 @@ function EditStaffDialog({ staff, branches, open, onOpenChange, onSaved }) {
           )}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="sm:justify-between">
+          {onResetLogin && staff?.email && !staff.email.endsWith("@agents.local") && (
+            <Button type="button" variant="outline" className="gap-2" onClick={() => onResetLogin(staff)}>
+              <KeyRound className="h-4 w-4" />
+              Reset Login
+            </Button>
+          )}
+          <div className="flex justify-end gap-2">
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
           <Button type="button" onClick={handleSave} disabled={saving}>
             {saving ? "Saving..." : "Save Changes"}
           </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -155,6 +164,9 @@ export default function Directory() {
   const [removeBackupReady, setRemoveBackupReady] = useState(false);
   const [exportingBackup, setExportingBackup] = useState(false);
   const [showAddAgent, setShowAddAgent] = useState(false);
+  const [resetTarget, setResetTarget] = useState(null);
+  const [resetPassword, setResetPassword] = useState("");
+  const [resettingLogin, setResettingLogin] = useState(false);
   const [addingAgent, setAddingAgent] = useState(false);
   const [agentForm, setAgentForm] = useState({
     fullname: "",
@@ -332,6 +344,27 @@ export default function Directory() {
       setError(err.message || "Could not add this agent.");
     } finally {
       setAddingAgent(false);
+    }
+  };
+
+  const handleResetEmailLogin = async () => {
+    if (!resetTarget) return;
+    if (resetPassword.length < 8) {
+      setError("The new login password must be at least 8 characters.");
+      return;
+    }
+    setResettingLogin(true);
+    setError("");
+    setSuccess("");
+    try {
+      await resetStaffEmailLogin(resetTarget.id, resetPassword);
+      setSuccess(`${resetTarget.fullname}'s email login has been reset. Their other sessions were signed out.`);
+      setResetTarget(null);
+      setResetPassword("");
+    } catch (err) {
+      setError(err.message || "Could not reset this email login.");
+    } finally {
+      setResettingLogin(false);
     }
   };
 
@@ -617,7 +650,52 @@ export default function Directory() {
           if (!open) setEditTarget(null);
         }}
         onSaved={handleSavedStaff}
+        onResetLogin={canOwnerControl ? (member) => {
+          setEditTarget(null);
+          setResetTarget(member);
+          setResetPassword("");
+          setError("");
+        } : null}
       />
+
+      <Dialog open={Boolean(resetTarget)} onOpenChange={(open) => {
+        if (!open) {
+          setResetTarget(null);
+          setResetPassword("");
+        }
+      }}>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-sm rounded-xl p-5 sm:p-6">
+          <DialogHeader>
+            <DialogTitle>Reset Email Login</DialogTitle>
+            <DialogDescription>
+              Set a new login password for {resetTarget?.fullname}. This signs out their existing sessions.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm">
+              <p className="font-medium text-foreground">{resetTarget?.email}</p>
+              <p className="mt-1 text-xs text-muted-foreground">The email address will not change.</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="staff-email-login-password">New Password</Label>
+              <Input
+                id="staff-email-login-password"
+                type="password"
+                autoComplete="new-password"
+                value={resetPassword}
+                onChange={(event) => setResetPassword(event.target.value)}
+                placeholder="At least 8 characters"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setResetTarget(null)}>Cancel</Button>
+            <Button type="button" onClick={handleResetEmailLogin} disabled={resettingLogin || resetPassword.length < 8}>
+              {resettingLogin ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Resetting...</> : "Reset Login"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={showAddAgent} onOpenChange={setShowAddAgent}>
         <DialogContent className="w-[calc(100vw-2rem)] max-w-md rounded-xl p-5 sm:p-6">
