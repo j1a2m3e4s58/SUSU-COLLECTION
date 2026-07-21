@@ -1,30 +1,42 @@
-﻿import { getSessionToken } from "@/api/authClient";
-
+﻿
+// @ts-ignore Vite injects import.meta.env at build time.
 const API_ROOT = (import.meta.env.VITE_MAIL_API_URL || "/mail-api/api").replace(/\/$/, "");
-export const PORTAL_CONTROL_PASSWORD_KEY = "susu.portalControlPassword";
+export const PORTAL_CONTROL_AUTHORIZATION_KEY = "susu.portalAuthorization";
 
-export function getStoredPortalControlPassword() {
+export function getStoredPortalAuthorization() {
   if (typeof window === "undefined") return "";
-  return window.sessionStorage.getItem(PORTAL_CONTROL_PASSWORD_KEY) || "";
+  return window.sessionStorage.getItem(PORTAL_CONTROL_AUTHORIZATION_KEY) || "";
 }
 
-export function setStoredPortalControlPassword(password) {
+export function setStoredPortalAuthorization(token) {
   if (typeof window === "undefined") return;
-  window.sessionStorage.setItem(PORTAL_CONTROL_PASSWORD_KEY, password);
+  if (token) window.sessionStorage.setItem(PORTAL_CONTROL_AUTHORIZATION_KEY, token);
+  else window.sessionStorage.removeItem(PORTAL_CONTROL_AUTHORIZATION_KEY);
 }
 
-async function apiRequest(path, { method = "GET", body } = {}) {
-  const token = getSessionToken();
+/**
+ * @param {string} path
+ * @param {{method?: string, body?: any}} [options]
+ */
+async function apiRequest(path, options = {}) {
+  const { method = "GET", body } = options;
+  const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
   const response = await fetch(`${API_ROOT}${path}`, {
     method,
+    credentials: "include",
     headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(!isFormData ? { "Content-Type": "application/json" } : {}),
     },
-    ...(body ? { body: JSON.stringify(body) } : {}),
+    ...(body ? { body: isFormData ? body : JSON.stringify(body) } : {}),
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (response.status === 428 && data.code === "REAUTHENTICATION_REQUIRED" && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("portal-reauth-required"));
+    }
+    if (response.status === 403 && /Portal Control authorization expired/i.test(data.error || "")) {
+      setStoredPortalAuthorization("");
+    }
     if (response.status === 401 && /session|unauthorized/i.test(data.error || "")) {
       localStorage.removeItem("susu_auth_user");
       if (typeof window !== "undefined" && !window.location.pathname.includes("/login")) {
@@ -80,21 +92,21 @@ export async function getPortalSettings() {
   return data.settings;
 }
 
-export async function updatePortalSettings(settings, password = getStoredPortalControlPassword()) {
+export async function updatePortalSettings(settings, portalAuthorization = getStoredPortalAuthorization()) {
   const data = await apiRequest("/portal-settings", {
     method: "POST",
     body: {
       ...settings,
-      password,
+      portalAuthorization,
     },
   });
   return data.settings;
 }
 
-export async function normalizeLegacySusuDepartments(backupConfirmed = false, password = getStoredPortalControlPassword()) {
+export async function normalizeLegacySusuDepartments(backupConfirmed = false, portalAuthorization = getStoredPortalAuthorization()) {
   return apiRequest("/maintenance/normalize-susu-departments", {
     method: "POST",
-    body: { backupConfirmed, password },
+    body: { backupConfirmed, portalAuthorization },
   });
 }
 
@@ -196,6 +208,13 @@ export async function createCustomer(payload) {
 }
 
 export async function importCustomers(payload) {
+  if (payload?.file) {
+    const form = new FormData();
+    form.append("file", payload.file);
+    form.append("branch", payload.branch || "");
+    form.append("preview", payload.preview ? "true" : "false");
+    return apiRequest("/customers/import", { method: "POST", body: form });
+  }
   return apiRequest("/customers/import", {
     method: "POST",
     body: payload,
@@ -264,11 +283,8 @@ export async function deleteAuditLogs(itemIds, backupConfirmed = false) {
 }
 
 export async function exportBackup() {
-  const token = getSessionToken();
   const response = await fetch(`${API_ROOT}/backup/export`, {
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    credentials: "include",
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -280,12 +296,12 @@ export async function exportBackup() {
   };
 }
 
-export async function importBackup(payload, password = getStoredPortalControlPassword()) {
+export async function importBackup(payload, portalAuthorization = getStoredPortalAuthorization()) {
   return apiRequest("/backup/import", {
     method: "POST",
     body: {
       ...payload,
-      password,
+      portalAuthorization,
     },
   });
 }
@@ -382,14 +398,11 @@ export async function logoutPresence(userId) {
 }
 
 export async function uploadProfilePhoto(file) {
-  const token = getSessionToken();
   const formData = new FormData();
   formData.append("file", file);
   const response = await fetch(`${API_ROOT}/uploads/profile-photo`, {
     method: "POST",
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    credentials: "include",
     body: formData,
   });
   const data = await response.json().catch(() => ({}));

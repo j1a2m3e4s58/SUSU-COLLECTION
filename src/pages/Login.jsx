@@ -12,7 +12,7 @@ import { Eye, EyeOff, Loader2 } from "lucide-react";
 
 export default function Login() {
   const navigate = useNavigate();
-  const { login, loginAgent, completeAgentFirstLogin, portalSettings } = useAuth();
+  const { login, loginAgent, completeAgentFirstLogin, completePrivilegedLogin, portalSettings } = useAuth();
   const publicRegistrationEnabled = portalSettings?.publicRegistrationEnabled === true;
 
   const [mode, setMode] = useState("staff");
@@ -28,6 +28,8 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [mfaChallenge, setMfaChallenge] = useState(null);
+  const [mfaCode, setMfaCode] = useState("");
 
   const showError = (message) => {
     toast({
@@ -51,10 +53,31 @@ export default function Login() {
     e.preventDefault();
     setLoading(true);
     try {
-      await login(email, password);
+      const result = await login(email, password);
+      if (result?.requiresMfa) {
+        setMfaChallenge(result);
+        setMfaCode(result.testCode || "");
+        showSuccess(result.testCode ? `Test verification code: ${result.testCode}` : "A verification code was sent to your official email.");
+        return;
+      }
       navigate("/", { replace: true });
     } catch (err) {
       showError(err.message || "Invalid email or password");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePrivilegedMfa = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      await completePrivilegedLogin(mfaChallenge.challengeId, mfaCode);
+      setMfaChallenge(null);
+      setMfaCode("");
+      navigate("/", { replace: true });
+    } catch (err) {
+      showError(err.message || "Invalid or expired verification code.");
     } finally {
       setLoading(false);
     }
@@ -372,6 +395,28 @@ export default function Login() {
           <button type="button" onClick={closeSetup} className="mt-3 w-full rounded-lg border border-border px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted">
             Cancel
           </button>
+        </div>
+      </div>
+    )}
+    {mfaChallenge && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
+        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+        <div className="relative w-full max-w-sm rounded-2xl border border-primary/20 bg-background/95 p-5 shadow-2xl backdrop-blur-xl">
+          <div className="mb-4 text-center">
+            <p className="page-kicker text-center">Protected account</p>
+            <h2 className="mt-1 font-display text-xl font-bold text-foreground">Verify Your Login</h2>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">Enter the six-digit code sent to your official email.</p>
+          </div>
+          <form onSubmit={handlePrivilegedMfa} className="space-y-3">
+            <div className="space-y-1">
+              <Label htmlFor="privileged-mfa-code" className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Verification Code</Label>
+              <Input id="privileged-mfa-code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={mfaCode} onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))} className="h-11 glass-input text-center text-lg tracking-[0.3em]" autoFocus required />
+            </div>
+            <Button type="submit" className="h-10 w-full glass-button text-sm font-bold uppercase tracking-[0.14em]" disabled={loading || mfaCode.length !== 6}>
+              {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Verifying...</> : "Verify And Sign In"}
+            </Button>
+            <button type="button" onClick={() => { setMfaChallenge(null); setMfaCode(''); }} className="w-full rounded-lg border border-border px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted">Cancel</button>
+          </form>
         </div>
       </div>
     )}

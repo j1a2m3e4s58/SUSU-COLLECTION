@@ -2,6 +2,9 @@ import importlib
 import os
 import pathlib
 import sys
+from concurrent.futures import ThreadPoolExecutor
+
+import pytest
 
 
 def load_app(monkeypatch, tmp_path):
@@ -62,6 +65,49 @@ def test_sessions_are_saved_hashed(monkeypatch, tmp_path):
     assert app_module.session_token_hash(token) in sessions
 
 
+def test_session_tokens_are_not_accepted_from_urls(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    owner = app_module.load_user_store()[0]
+    token = app_module.issue_session(owner["id"])
+    client = app_module.app.test_client()
+    response = client.post(f"/api/auth/me?sessionToken={token}")
+    assert response.status_code == 401
+
+
+def test_security_headers_are_applied(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    response = app_module.app.test_client().get("/api/health")
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert response.headers["X-Frame-Options"] == "DENY"
+    assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
+    assert response.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
+
+
+def test_audit_restore_merge_preserves_existing_history(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    existing = [{
+        "id": 1,
+        "actorId": "owner-admin-1",
+        "actorName": "Owner",
+        "action": "CURRENT_ACTION",
+        "target": "current",
+        "ipAddress": "127.0.0.1",
+        "timestamp": 10,
+    }]
+    imported = [{
+        "id": 1,
+        "actorId": "old-user",
+        "actorName": "Old User",
+        "action": "IMPORTED_ACTION",
+        "target": "imported",
+        "ipAddress": "127.0.0.1",
+        "timestamp": 5,
+    }]
+    merged = app_module.merge_audit_logs(existing, imported)
+    assert {item["action"] for item in merged} == {"CURRENT_ACTION", "IMPORTED_ACTION"}
+    assert len({item["id"] for item in merged}) == 2
+
+
 def test_field_collection_does_not_send_protected_deposit_fields():
     source = pathlib.Path(__file__).resolve().parents[2] / "src" / "pages" / "FieldCollection.jsx"
     text = source.read_text(encoding="utf-8")
@@ -94,12 +140,31 @@ def test_default_password_seeds_initial_staff(monkeypatch, tmp_path):
         "passwordHash": "SeedPass123!",
     })
     assert response.status_code == 200
-    assert response.get_json()["user"]["email"] == "jbruku@bawjiasecommunitybank.com"
+    challenge = response.get_json()
+    assert challenge["requiresMfa"] is True
+    verified = client.post("/api/auth/privileged-mfa/verify", json={
+        "challengeId": challenge["challengeId"],
+        "code": challenge["testCode"],
+    })
+    assert verified.status_code == 200
+    assert verified.get_json()["user"]["email"] == "jbruku@bawjiasecommunitybank.com"
+    assert "sessionToken" not in verified.get_json()
+    assert app_module.SESSION_COOKIE_NAME in verified.headers.get("Set-Cookie", "")
 
 
 def auth_headers(app_module, user_id):
     token = app_module.issue_session(user_id)
     return {"Authorization": f"Bearer {token}"}
+
+
+def unlock_portal_control(client, headers):
+    response = client.post(
+        "/api/portal-settings/unlock",
+        json={"password": "SecretPortalPassword123"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    return response.get_json()["authorizationToken"]
 
 
 def save_test_users(app_module, *users):
@@ -126,12 +191,13 @@ def test_owner_cleanup_permanently_normalizes_legacy_susu_departments(monkeypatc
     owner = app_module.load_user_store()[0]
     client = app_module.app.test_client()
     headers = auth_headers(app_module, owner["id"])
+    portal_authorization = unlock_portal_control(client, headers)
     backup_response = client.get("/api/backup/export", headers=headers)
     assert backup_response.status_code == 200
     response = client.post(
         "/api/maintenance/normalize-susu-departments",
         json={
-            "password": "SecretPortalPassword123",
+            "portalAuthorization": portal_authorization,
             "backupConfirmed": True,
         },
         headers=headers,
@@ -147,15 +213,17 @@ def test_portal_branch_removal_requires_backup(monkeypatch, tmp_path):
     owner = app_module.load_user_store()[0]
     settings = app_module.load_portal_settings_store()
     client = app_module.app.test_client()
+    headers = auth_headers(app_module, owner["id"])
+    portal_authorization = unlock_portal_control(client, headers)
     response = client.post(
         "/api/portal-settings",
         json={
             **settings,
             "branches": settings["branches"][:-1],
-            "password": "SecretPortalPassword123",
+            "portalAuthorization": portal_authorization,
             "backupConfirmed": False,
         },
-        headers=auth_headers(app_module, owner["id"]),
+        headers=headers,
     )
     assert response.status_code == 400
     assert "Export a backup" in response.get_json()["error"]
@@ -248,10 +316,14 @@ def test_supervisor_backup_is_limited_to_managed_branch(monkeypatch, tmp_path):
     assert backup["stores"]["passwords"] == {}
     assert "BAWJIASE" in backup["metadata"]["scope"]
 
+    owner_headers = auth_headers(app_module, app_module.OWNER_ADMIN_USER["id"])
     restore = client.post(
         "/api/backup/import",
-        json={**backup, "password": "SecretPortalPassword123"},
-        headers=auth_headers(app_module, app_module.OWNER_ADMIN_USER["id"]),
+        json={
+            **backup,
+            "portalAuthorization": unlock_portal_control(client, owner_headers),
+        },
+        headers=owner_headers,
     )
     assert restore.status_code == 400
     assert "Branch-scoped backups are export-only" in restore.get_json()["error"]
@@ -413,3 +485,156 @@ def test_collection_enforces_branch_account_and_duplicate_protection(monkeypatch
     duplicate = client.post("/api/collections", json={"customer_id": "customer-own", "amount": 12, "idempotency_key": "deposit-2"}, headers=headers)
     assert duplicate.status_code == 400
     assert "already has a completed deposit" in duplicate.get_json()["error"]
+
+
+def test_session_uses_short_idle_and_absolute_expiry(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    owner = app_module.load_user_store()[0]
+    token = app_module.issue_session(owner["id"])
+    sessions = app_module.load_sessions()
+    session = sessions[app_module.session_token_hash(token)]
+    assert session["expiresAt"] - session["lastActivityAt"] == 30 * 60
+    assert session["absoluteExpiresAt"] - session["lastActivityAt"] == 12 * 60 * 60
+    session["expiresAt"] = app_module.now_seconds() - 1
+    app_module.save_sessions(sessions)
+    response = app_module.app.test_client().post(
+        "/api/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 401
+
+
+@pytest.mark.parametrize("path", [
+    "/api/maintenance/clear-test-data",
+    "/api/maintenance/remove-test-customers",
+    "/api/maintenance/seed-test-customers",
+])
+def test_live_mode_blocks_test_data_routes(monkeypatch, tmp_path, path):
+    app_module = load_app(monkeypatch, tmp_path)
+    settings = app_module.load_portal_settings_store()
+    settings["appMode"] = "live"
+    app_module.save_portal_settings_store(settings)
+    owner = app_module.load_user_store()[0]
+    response = app_module.app.test_client().post(
+        path,
+        json={"backupConfirmed": False},
+        headers=auth_headers(app_module, owner["id"]),
+    )
+    assert response.status_code == 400
+    assert "Test Mode" in response.get_json()["error"]
+
+
+@pytest.mark.parametrize("path", [
+    "/api/content/announcements",
+    "/api/content/forms",
+    "/api/content/training/videos",
+])
+def test_removed_legacy_content_routes_are_not_registered(monkeypatch, tmp_path, path):
+    app_module = load_app(monkeypatch, tmp_path)
+    response = app_module.app.test_client().post(path, json={})
+    assert response.status_code == 405
+
+
+def test_concurrent_deposits_allow_only_one_daily_record(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    agent = {
+        "id": "agent-concurrent",
+        "fullname": "Concurrent Agent",
+        "phone": "0240000010",
+        "email": "concurrent@agents.local",
+        "role": "GeneralStaff",
+        "department": "SUSU",
+        "branch": "BAWJIASE",
+        "isActive": True,
+        "isVerified": True,
+    }
+    save_test_users(app_module, agent)
+    app_module.save_json_list_store(app_module.CUSTOMERS_STORE_PATH, [{
+        "id": "customer-concurrent",
+        "account_name": "Concurrent Customer",
+        "account_number": "1310000100099",
+        "branch_name": "BAWJIASE",
+        "customer_status": "active",
+        "total_deposits": 0,
+    }])
+    token = app_module.issue_session(agent["id"])
+
+    def submit(key):
+        client = app_module.app.test_client()
+        return client.post(
+            "/api/collections",
+            json={"customer_id": "customer-concurrent", "amount": 10, "idempotency_key": key},
+            headers={"Authorization": f"Bearer {token}"},
+        ).status_code
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        statuses = sorted(executor.map(submit, ["parallel-1", "parallel-2"]))
+    assert statuses == [200, 400]
+    assert len(app_module.load_json_list_store(app_module.COLLECTIONS_STORE_PATH)) == 1
+
+
+def test_backup_export_and_restore_round_trip(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    owner = app_module.load_user_store()[0]
+    client = app_module.app.test_client()
+    headers = auth_headers(app_module, owner["id"])
+    authorization = unlock_portal_control(client, headers)
+    original = [{"id": "before", "account_number": "1310000100088", "branch_name": "BAWJIASE"}]
+    app_module.save_json_list_store(app_module.CUSTOMERS_STORE_PATH, original)
+    backup = client.get("/api/backup/export", headers=headers).get_json()
+    app_module.save_json_list_store(app_module.CUSTOMERS_STORE_PATH, [])
+    response = client.post(
+        "/api/backup/import",
+        json={**backup, "portalAuthorization": authorization},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert app_module.load_json_list_store(app_module.CUSTOMERS_STORE_PATH) == original
+
+
+def test_email_and_sms_delivery_adapters(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    monkeypatch.setenv("MAIL_SERVER", "smtp.example.test")
+    monkeypatch.setenv("MAIL_USERNAME", "mailer")
+    monkeypatch.setenv("MAIL_PASSWORD", "secret")
+    monkeypatch.setenv("MAIL_DEFAULT_SENDER", "portal@example.test")
+    monkeypatch.setenv("SMS_WEBHOOK_URL", "https://sms.example.test/send")
+    sent = {}
+
+    class FakeSmtp:
+        def __init__(self, *args, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def login(self, username, password):
+            sent["smtpLogin"] = (username, password)
+        def send_message(self, message):
+            sent["subject"] = message["Subject"]
+
+    class FakeResponse:
+        status = 202
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(app_module.smtplib, "SMTP_SSL", FakeSmtp)
+    monkeypatch.setattr(app_module, "urlopen", lambda *args, **kwargs: FakeResponse())
+    app_module.send_mail("staff@example.test", "Portal test", "text", "<p>text</p>")
+    assert sent["subject"] == "Portal test"
+    assert app_module.send_sms_token("0240000000", "123456") is True
+
+
+def test_postgresql_schema_integration_when_test_database_is_configured(monkeypatch, tmp_path):
+    database_url = os.getenv("TEST_DATABASE_URL", "").strip()
+    if not database_url:
+        pytest.skip("Set TEST_DATABASE_URL to run the PostgreSQL integration test.")
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    app_module = load_app(monkeypatch, tmp_path)
+    app_module.ensure_pg_store_table()
+    with app_module.pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('public.susu_deposit_guards')")
+            assert cur.fetchone()[0] == "susu_deposit_guards"

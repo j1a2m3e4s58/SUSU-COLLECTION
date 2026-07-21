@@ -33,6 +33,7 @@ import PortalControl from '@/pages/PortalControl';
 import PastStaff from '@/pages/PastStaff';
 import InactiveCustomers from '@/pages/InactiveCustomers';
 import { canManageCustomers, isOwnerAdmin, isSusuAgent } from '@/lib/roles';
+import SensitiveReauthDialog from '@/components/SensitiveReauthDialog';
 
 const RequireAdmin = ({ children }) => {
   const { user } = useAuth();
@@ -127,9 +128,10 @@ function App() {
     <AuthProvider>
       <ThemeProvider>
         <QueryClientProvider client={queryClientInstance}>
-          <Router>
+          <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <ScrollToTop />
             <AuthenticatedApp />
+            <SensitiveReauthDialog />
           </Router>
           <Toaster />
         </QueryClientProvider>

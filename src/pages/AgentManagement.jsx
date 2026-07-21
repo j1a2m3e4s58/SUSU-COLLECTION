@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import * as XLSX from 'xlsx';
-import { createAgentAccount, createAuditLog, deleteStaff, exportBackup, getActiveStaff, getCollections, getCustomerImports, getPortalSettings, importCustomers, reopenDailyCollections, resetAgentPassword, updateStaff } from '@/api/portalClient';
+import { createAgentAccount, deleteStaff, exportBackup, getActiveStaff, getCollections, getCustomerImports, getPortalSettings, importCustomers, reopenDailyCollections, resetAgentPassword, updateStaff } from '@/api/portalClient';
 import ControlledSelect from '@/components/ui/controlled-select';
 import { useAuth } from '@/lib/AuthContext';
 import { useWorkDate } from '@/lib/WorkDateContext';
@@ -36,6 +35,7 @@ export default function AgentManagement() {
   const [importBranch, setImportBranch] = useState('');
   const [importRows, setImportRows] = useState([]);
   const [importInvalidRows, setImportInvalidRows] = useState([]);
+  const [importFile, setImportFile] = useState(null);
   const [importFileName, setImportFileName] = useState('');
   const [importSummary, setImportSummary] = useState(null);
   const [importHistory, setImportHistory] = useState([]);
@@ -109,14 +109,9 @@ export default function AgentManagement() {
   const handleTransfer = async () => {
     if (!newBranch || !reason) { setError('Please select a branch and provide a reason'); return; }
     setSaving(true); setError('');
-    const oldBranch = transferAgent.branch || transferAgent.branch_name || 'Unassigned';
     try {
       await updateStaff(transferAgent.id, {
         branch: newBranch,
-      });
-      await createAuditLog({
-        action: 'branch_switch',
-        target: `Agent ${transferAgent.fullname || transferAgent.full_name} transferred from ${oldBranch} to ${newBranch}. Reason: ${reason}`,
       });
       setSuccess(`${transferAgent.fullname || transferAgent.full_name} transferred to ${newBranch}`);
       setTransferAgent(null); setNewBranch(''); setReason('');
@@ -159,10 +154,6 @@ export default function AgentManagement() {
     setError('');
     try {
       await Promise.all(selectedAgents.map((agent) => deleteStaff(agent.id, true)));
-      await createAuditLog({
-        action: 'agent_bulk_delete',
-        target: `Deleted agents: ${selectedAgents.map((agent) => agent.fullname || agent.full_name).join(', ')}`,
-      });
       setStaff((current) => current.filter((agent) => !selectedIds.has(agent.id)));
       setSelectedIds(new Set());
       setDeleteBackupReady(false);
@@ -287,51 +278,32 @@ export default function AgentManagement() {
     }
   };
 
-  const normalizeImportRow = (row, rowNumber) => {
-    const find = (...keys) => {
-      const entries = Object.entries(row || {});
-      const match = entries.find(([key]) => keys.includes(String(key).trim().toLowerCase()));
-      return match ? String(match[1] ?? '').trim().replace(/\.0$/, '') : '';
-    };
-    const normalized = {
-      rowNumber,
-      account_name: find('account name', 'account_name', 'name', 'customer name'),
-      account_number: find('account number', 'account_number', 'account no', 'account no.', 'account'),
-      branch: find('branch', 'branch name') || importBranch,
-    };
-    const errors = [];
-    if (!normalized.account_name) errors.push('Account name missing');
-    if (!/^\d{13}$/.test(normalized.account_number)) errors.push('Account number must be exactly 13 digits');
-    if (!normalized.branch) errors.push('Branch missing');
-    return { ...normalized, errors };
-  };
-
   const downloadCustomerTemplate = () => {
-    const worksheet = XLSX.utils.json_to_sheet([
-      { 'Account Name': 'TEST AMA MENSAH', 'Account Number': '131000100001', Branch: scopedBranches[0] || 'BAWJIASE' },
-    ]);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Customer Template');
-    XLSX.writeFile(workbook, 'susu_customer_import_template.xlsx');
+    const rows = [
+      ['Account Name', 'Account Number', 'Branch'],
+      ['TEST AMA MENSAH', '1310000100001', scopedBranches[0] || 'BAWJIASE'],
+    ];
+    const csv = rows.map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(',')).join('\r\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'susu_customer_import_template.csv';
+    anchor.click();
+    URL.revokeObjectURL(url);
   };
 
   const handleImportFile = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    setImportFile(file);
     setImportFileName(file.name);
     setImportSummary(null);
     setError('');
     try {
-      const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: 'array' });
-      const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      const parsedRows = XLSX.utils.sheet_to_json(sheet, { defval: '' })
-        .map((row, index) => normalizeImportRow(row, index + 2));
-      const validRows = parsedRows.filter((row) => row.errors.length === 0);
-      const invalidRows = parsedRows.filter((row) => row.errors.length > 0);
-      setImportRows(validRows);
-      setImportInvalidRows(invalidRows);
-      if (!validRows.length) setError('No valid rows found. Use columns: Account Name, Account Number, Branch.');
+      const preview = await importCustomers({ branch: importBranch, file, preview: true });
+      setImportRows(preview.validRows || []);
+      setImportInvalidRows((preview.skipped || []).map((row) => ({ rowNumber: row.row, errors: [row.reason] })));
+      if (!(preview.validRows || []).length) setError('No valid rows found. Use columns: Account Name, Account Number, Branch.');
     } catch (err) {
       setError(err.message || 'Could not read the upload file.');
     } finally {
@@ -341,15 +313,16 @@ export default function AgentManagement() {
 
   const handleImportCustomers = async () => {
     if (!importBranch) { setError('Select the branch for this import.'); return; }
-    if (!importRows.length) { setError('Choose a CSV or Excel file first.'); return; }
+    if (!importFile || !importRows.length) { setError('Choose a CSV or Excel file first.'); return; }
     setSaving(true);
     setError('');
     try {
-      const result = await importCustomers({ branch: importBranch, customers: importRows });
+      const result = await importCustomers({ branch: importBranch, file: importFile });
       setImportSummary(result);
       setSuccess(`${result.createdCount || 0} customer(s) imported.`);
       setImportRows([]);
       setImportInvalidRows([]);
+      setImportFile(null);
       setImportFileName('');
       await refreshData();
     } catch (err) {
@@ -661,8 +634,8 @@ export default function AgentManagement() {
               <label className="flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-border bg-muted/30 p-5 text-center hover:bg-muted/50">
                 <Upload className="mb-2 h-6 w-6 text-blue-500" />
                 <span className="text-sm font-medium text-foreground">{importFileName || 'Choose CSV / Excel file'}</span>
-                <span className="mt-1 text-xs text-muted-foreground">{importRows.length || importInvalidRows.length ? `${importRows.length} valid, ${importInvalidRows.length} skipped` : 'Accepted: .csv, .xlsx, .xls'}</span>
-                <input type="file" accept=".csv,.xlsx,.xls" onChange={handleImportFile} className="hidden" />
+                <span className="mt-1 text-xs text-muted-foreground">{importRows.length || importInvalidRows.length ? `${importRows.length} valid, ${importInvalidRows.length} skipped` : 'Accepted: .csv, .xlsx'}</span>
+                <input type="file" accept=".csv,.xlsx" onChange={handleImportFile} className="hidden" />
               </label>
               {importRows.length > 0 && (
                 <div className="max-h-36 overflow-y-auto rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2 text-xs">

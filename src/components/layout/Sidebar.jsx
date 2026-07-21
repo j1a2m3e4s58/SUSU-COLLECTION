@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { setStoredPortalControlPassword, unlockPortalControl } from '@/api/portalClient';
+import { setStoredPortalAuthorization, unlockPortalControl } from '@/api/portalClient';
 import { canManageCustomers as canManageCustomerRecords, isOwnerAdmin, isSusuAgent as isAgentUser } from '@/lib/roles';
 
 export const navItems = [
@@ -67,8 +67,8 @@ export default function Sidebar({ isOpen, onClose, user, settings }) {
     setUnlocking(true);
     setUnlockError("");
     try {
-      await unlockPortalControl(password.trim());
-      setStoredPortalControlPassword(password.trim());
+      const result = await unlockPortalControl(password.trim());
+      setStoredPortalAuthorization(result.authorizationToken);
       setUnlockOpen(false);
       onClose?.();
       navigate('/portal-control');

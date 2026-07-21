@@ -1,37 +1,19 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  getActiveStaff,
-  getPortalSettings,
-  getStoredPortalControlPassword,
-  updatePortalSettings,
-} from "@/api/portalClient";
+import { getActiveStaff, getPortalSettings } from "@/api/portalClient";
 import { useAuth } from "@/lib/AuthContext";
-import { Building2, Plus, Search, ShieldCheck, Users } from "lucide-react";
+import { Building2, Search, Settings2, ShieldCheck, Users } from "lucide-react";
 
 export default function BranchManagement() {
   const { user } = useAuth();
-  const [settings, setSettings] = useState(null);
   const [branches, setBranches] = useState([]);
   const [staff, setStaff] = useState([]);
   const [search, setSearch] = useState("");
-  const [newBranch, setNewBranch] = useState("");
-  const [addOpen, setAddOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
 
   const canChangeBranches = user?.role === "OwnerAdmin";
 
@@ -44,7 +26,6 @@ export default function BranchManagement() {
           getActiveStaff(),
         ]);
         if (!mounted) return;
-        setSettings(settings);
         setBranches(settings.branches || []);
         setStaff((users || []).filter((member) => member.role !== "OwnerAdmin"));
         setError("");
@@ -61,49 +42,6 @@ export default function BranchManagement() {
       window.clearInterval(intervalId);
     };
   }, []);
-
-  const handleAddBranch = async () => {
-    const branchName = newBranch.trim().toUpperCase();
-    setError("");
-    setSuccess("");
-    if (!branchName) {
-      setError("Enter a branch name.");
-      return;
-    }
-    if (branches.some((item) => item.toUpperCase() === branchName)) {
-      setError("This branch already exists.");
-      return;
-    }
-    if (!canChangeBranches) {
-      setError("Only the Owner Admin can add branches because this changes system-wide registration and reporting lists.");
-      return;
-    }
-    const portalPassword = getStoredPortalControlPassword();
-    if (!portalPassword) {
-      setError("Open Portal Control from the sidebar and enter the password before adding branches.");
-      return;
-    }
-
-    setSaving(true);
-    try {
-      const updated = await updatePortalSettings(
-        {
-          ...(settings || {}),
-          branches: [...branches, branchName],
-        },
-        portalPassword
-      );
-      setSettings(updated);
-      setBranches(updated.branches || []);
-      setNewBranch("");
-      setAddOpen(false);
-      setSuccess(`${branchName} has been added and will appear in registration.`);
-    } catch (err) {
-      setError(err.message || "Could not add branch");
-    } finally {
-      setSaving(false);
-    }
-  };
 
   const branchRows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -157,9 +95,8 @@ export default function BranchManagement() {
             />
           </div>
           {canChangeBranches && (
-            <Button type="button" className="gap-2" onClick={() => setAddOpen(true)}>
-              <Plus className="h-4 w-4" />
-              Add Branch
+            <Button asChild type="button" variant="outline" className="gap-2">
+              <Link to="/portal-control"><Settings2 className="h-4 w-4" />Manage in Portal Control</Link>
             </Button>
           )}
         </div>
@@ -187,11 +124,6 @@ export default function BranchManagement() {
       {error && (
         <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
           {error}
-        </div>
-      )}
-      {success && (
-        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-600">
-          {success}
         </div>
       )}
 
@@ -231,36 +163,6 @@ export default function BranchManagement() {
               </div>
             ))}
       </div>
-
-      <Dialog open={addOpen} onOpenChange={setAddOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Add Branch</DialogTitle>
-            <DialogDescription>
-              New branches are saved to SUSU system settings and appear in registration, directory filters, and branch reports.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="new-branch">Branch Name</Label>
-              <Input
-                id="new-branch"
-                value={newBranch}
-                onChange={(event) => setNewBranch(event.target.value)}
-                placeholder="e.g. AWUTU BRANCH"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setAddOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="button" onClick={handleAddBranch} disabled={saving}>
-              {saving ? "Adding..." : "Add Branch"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

@@ -82,7 +82,6 @@ export default function Profile() {
   const fileInputRef = useRef(null);
 
   const [branches, setBranches] = useState([]);
-  const [departments, setDepartments] = useState([]);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -122,7 +121,6 @@ export default function Profile() {
         ]);
         if (!mounted) return;
         setBranches(settings.branches || []);
-        setDepartments(settings.departments?.length ? settings.departments : ["SUSU"]);
         if (profile) updateUser(profile);
       } catch {
         // Keep local session profile if refresh fails.
@@ -191,7 +189,6 @@ export default function Profile() {
       };
       if (canEditOrg) {
         payload.branch = form.branch;
-        payload.department = form.department;
       }
       if (photoFile) {
         const uploaded = await uploadProfilePhoto(photoFile);
@@ -361,13 +358,9 @@ export default function Profile() {
                   <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Department
                   </label>
-                  <ControlledSelect
-                    value={form.department}
-                    disabled={!canEditOrg}
-                    onChange={(value) => updateField("department", value)}
-                    options={departments}
-                    className="rounded-lg border-border bg-background py-2.5 text-sm disabled:opacity-60"
-                  />
+                  <div className="flex h-10 items-center rounded-lg border border-border bg-muted/40 px-3 text-sm font-medium text-foreground">
+                    SUSU
+                  </div>
                 </div>
               </div>
               <div className="flex flex-wrap gap-2 pt-2">

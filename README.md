@@ -51,7 +51,14 @@ npx eslint src/components src/pages --quiet
 npm run build
 python -m pytest mail-api/tests/test_security_hardening.py -q
 python -m py_compile mail-api/app.py
+npm run test:e2e
+npm run test:e2e:mobile
 ```
+
+The Playwright suite covers staff login, SUSU Agent permissions and exact-account
+search, Supervisor customer import/report export, and the mobile navigation at
+360px, 400px, and 430px widths. Set `TEST_DATABASE_URL` to a disposable PostgreSQL
+database to include the PostgreSQL integration test; it is skipped otherwise.
 
 ## Render Deployment
 
@@ -84,7 +91,11 @@ Configure all required secrets in Render:
 7. Confirm every account number is exactly 13 digits.
 8. Record a test deposit and verify duplicate/idempotency protection.
 9. Verify Daily, Agent, Branch, Audit, PDF, and Excel exports.
-10. Complete the 400px mobile pass for login, dashboard, collection, customers, directory, transactions, reports, profile, and Portal Control.
+10. Complete the 360px, 400px, and 430px mobile pass for login, dashboard, collection, customers, directory, transactions, reports, profile, and Portal Control.
 11. Switch from Test Mode to Live Mode only after every production check passes.
+
+Portal Control defaults to a 30-minute idle session, a 12-hour absolute session,
+and fresh password confirmation for sensitive operations after 15 minutes. Existing
+sessions created under the older policy are invalidated on deployment.
 
 For a manual Render release, use **Manual Deploy > Deploy latest commit** after pushing to GitHub.

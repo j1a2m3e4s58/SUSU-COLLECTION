@@ -1,13 +1,13 @@
+// @ts-ignore Vite injects import.meta.env at build time.
 const API_ROOT = (import.meta.env.VITE_MAIL_API_URL || "/mail-api/api").replace(/\/$/, "");
 const AUTH_STORAGE_KEY = "susu_auth_user";
 
 async function request(path, payload) {
-  const token = getSessionToken();
   const response = await fetch(`${API_ROOT}${path}`, {
     method: "POST",
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify(payload || {}),
   });
@@ -27,8 +27,9 @@ export function getStoredAuthUser() {
   }
 }
 
-export function storeAuthUser(user, sessionToken) {
-  const value = { ...user, sessionToken };
+export function storeAuthUser(user) {
+  const value = { ...user };
+  delete value.sessionToken;
   localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(value));
   return value;
 }
@@ -38,18 +39,24 @@ export function clearStoredAuthUser() {
 }
 
 export function getSessionToken() {
-  return getStoredAuthUser()?.sessionToken || null;
+  return null;
 }
 
 export async function loginWithEmail(email, password) {
   const data = await request("/auth/login", { email, passwordHash: password });
-  return storeAuthUser(data.user, data.sessionToken);
+  if (data.requiresMfa) return data;
+  return storeAuthUser(data.user);
+}
+
+export async function verifyPrivilegedMfa(challengeId, code) {
+  const data = await request("/auth/privileged-mfa/verify", { challengeId, code });
+  return storeAuthUser(data.user);
 }
 
 export async function loginAgentWithUsername(username, password) {
   const data = await request("/auth/agent-login", { username, passwordHash: password });
   if (data.requiresSetup) return data;
-  return storeAuthUser(data.user, data.sessionToken);
+  return storeAuthUser(data.user);
 }
 
 export async function verifyAgentSetupPhone(payload) {
@@ -77,7 +84,16 @@ export async function completeAgentSetup(payload) {
     token: payload.token,
     newPasswordHash: payload.newPassword,
   });
-  return storeAuthUser(data.user, data.sessionToken);
+  return storeAuthUser(data.user);
+}
+
+export async function getCurrentUser() {
+  const data = await request("/auth/me", {});
+  return storeAuthUser(data.user);
+}
+
+export async function reauthenticate(password) {
+  return request("/auth/reauthenticate", { password });
 }
 
 export async function registerWithEmail(payload) {

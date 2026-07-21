@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 import hashlib
 import hmac
@@ -14,9 +16,10 @@ from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
 from urllib.request import Request, urlopen
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, redirect, request, send_from_directory
+from flask import Flask, jsonify, redirect, request, send_file, send_from_directory
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
+from openpyxl import load_workbook
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
@@ -24,6 +27,8 @@ DATA_DIR = os.getenv("PORTAL_DATA_DIR", BASE_DIR).strip() or BASE_DIR
 FRONTEND_PUBLIC_DIR = os.getenv("PORTAL_FRONTEND_DIR", os.path.join(BASE_DIR, "public")).strip() or os.path.join(BASE_DIR, "public")
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 PG_LOCK_KEY = 2026071501
+SESSION_COOKIE_NAME = "susu_session"
+PORTAL_AUTHORIZATION_MINUTES = 10
 
 OFFICIAL_EMAIL_DOMAIN = "@bawjiasecommunitybank.com"
 PRESENCE_STORE_PATH = os.path.join(DATA_DIR, "presence_store.json")
@@ -32,15 +37,11 @@ USERS_STORE_PATH = os.path.join(DATA_DIR, "users_store.json")
 PENDING_VERIFICATIONS_PATH = os.path.join(DATA_DIR, "pending_verifications.json")
 RESET_TOKENS_PATH = os.path.join(DATA_DIR, "reset_tokens.json")
 AGENT_SETUP_TOKENS_PATH = os.path.join(DATA_DIR, "agent_setup_tokens.json")
+PRIVILEGED_MFA_PATH = os.path.join(DATA_DIR, "privileged_mfa.json")
+AUTH_RATE_LIMITS_PATH = os.path.join(DATA_DIR, "auth_rate_limits.json")
 SESSIONS_STORE_PATH = os.path.join(DATA_DIR, "sessions_store.json")
-ANNOUNCEMENTS_STORE_PATH = os.path.join(DATA_DIR, "announcements_store.json")
-FORMS_STORE_PATH = os.path.join(DATA_DIR, "forms_store.json")
-TRAINING_VIDEOS_STORE_PATH = os.path.join(DATA_DIR, "training_videos_store.json")
-TRAINING_DOCUMENTS_STORE_PATH = os.path.join(DATA_DIR, "training_documents_store.json")
+PORTAL_AUTHORIZATIONS_PATH = os.path.join(DATA_DIR, "portal_authorizations.json")
 NOTIFICATIONS_STORE_PATH = os.path.join(DATA_DIR, "notifications_store.json")
-TRAINING_VIDEO_PROGRESS_STORE_PATH = os.path.join(DATA_DIR, "training_video_progress_store.json")
-TRAINING_DOCUMENT_OPENS_STORE_PATH = os.path.join(DATA_DIR, "training_document_opens_store.json")
-TRAINING_REMINDERS_STORE_PATH = os.path.join(DATA_DIR, "training_reminders_store.json")
 AUDIT_LOGS_STORE_PATH = os.path.join(DATA_DIR, "audit_logs_store.json")
 PORTAL_SETTINGS_STORE_PATH = os.path.join(DATA_DIR, "portal_settings_store.json")
 CUSTOMERS_STORE_PATH = os.path.join(DATA_DIR, "customers_store.json")
@@ -53,7 +54,6 @@ ONLINE_WINDOW_SECONDS = 20
 RESET_TOKEN_TTL_SECONDS = 30 * 60
 VERIFICATION_TTL_SECONDS = 15 * 60
 SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
-TRAINING_REMINDER_COOLDOWN_SECONDS = 24 * 60 * 60
 PORTAL_CONTROL_PASSWORD = str(os.getenv("PORTAL_CONTROL_PASSWORD", "") or "").strip()
 RATE_LIMIT_WINDOW_SECONDS = 15 * 60
 RATE_LIMIT_MAX_ATTEMPTS = 8
@@ -89,11 +89,11 @@ DEFAULT_PORTAL_SETTINGS = {
     "portalControlPassword": PORTAL_CONTROL_PASSWORD,
     "itAccessCode": "",
     "hrAccessCode": "",
-    "sessionDays": 30,
+    "sessionMinutes": 30,
+    "absoluteSessionHours": 12,
+    "sensitiveReauthMinutes": 15,
     "verificationMinutes": 15,
     "passwordResetMinutes": 30,
-    "videoUploadLimitMb": 1024,
-    "documentUploadLimitMb": 100,
     "dashboardLabel": "Dashboard",
     "trainingLabel": "",
     "formsLabel": "",
@@ -125,13 +125,6 @@ IT_ACCESS_CODE = env_secret("IT_ACCESS_CODE")
 HR_ACCESS_CODE = env_secret("HR_ACCESS_CODE")
 GLOBAL_MANAGER_ROLES = {"OwnerAdmin"}
 OWNER_ADMIN_ROLE = "OwnerAdmin"
-DISABLED_CONTENT_MODULES = {
-    "announcements",
-    "forms",
-    "trainingVideos",
-    "trainingDocuments",
-    "support",
-}
 
 OWNER_ADMIN_USER = {
     "id": "owner-admin-1",
@@ -295,7 +288,6 @@ INITIAL_USERS = [
 app = Flask(__name__, static_folder=None)
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(UPLOADS_DIR, exist_ok=True)
-FAILED_AUTH_ATTEMPTS: dict[str, list[int]] = {}
 
 
 def pg_enabled() -> bool:
@@ -334,6 +326,157 @@ def ensure_pg_store_table() -> None:
                     )
                     """
                 )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS portal_schema_migrations (
+                      migration_key TEXT PRIMARY KEY,
+                      applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS susu_customers (
+                      record_id TEXT PRIMARY KEY,
+                      account_number TEXT NOT NULL UNIQUE CHECK (account_number ~ '^[0-9]{13}$'),
+                      branch_name TEXT NOT NULL,
+                      customer_status TEXT NOT NULL,
+                      payload JSONB NOT NULL,
+                      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_susu_customers_branch ON susu_customers (branch_name)")
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS susu_collections (
+                      record_id TEXT PRIMARY KEY,
+                      customer_id TEXT NOT NULL,
+                      transaction_reference TEXT NOT NULL UNIQUE,
+                      account_number TEXT NOT NULL CHECK (account_number ~ '^[0-9]{13}$'),
+                      amount NUMERIC(14, 2) NOT NULL CHECK (amount > 0),
+                      agent_id TEXT NOT NULL,
+                      branch_name TEXT NOT NULL,
+                      transaction_date DATE NOT NULL,
+                      collection_status TEXT NOT NULL,
+                      idempotency_key TEXT,
+                      payload JSONB NOT NULL,
+                      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_susu_collections_date ON susu_collections (transaction_date)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_susu_collections_agent ON susu_collections (agent_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_susu_collections_branch ON susu_collections (branch_name)")
+                cur.execute(
+                    """
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_susu_collections_idempotency
+                    ON susu_collections (agent_id, idempotency_key)
+                    WHERE idempotency_key IS NOT NULL AND idempotency_key <> ''
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS susu_deposit_guards (
+                      customer_id TEXT NOT NULL,
+                      transaction_date DATE NOT NULL,
+                      agent_id TEXT NOT NULL,
+                      idempotency_key TEXT,
+                      collection_id TEXT NOT NULL UNIQUE,
+                      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                      PRIMARY KEY (customer_id, transaction_date)
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_susu_deposit_guard_idempotency
+                    ON susu_deposit_guards (agent_id, idempotency_key)
+                    WHERE idempotency_key IS NOT NULL AND idempotency_key <> ''
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS portal_uploads (
+                      filename TEXT PRIMARY KEY,
+                      content_type TEXT NOT NULL,
+                      payload BYTEA NOT NULL,
+                      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+                cur.execute(
+                    "SELECT 1 FROM portal_schema_migrations WHERE migration_key = %s",
+                    ("normalized-financial-records-v1",),
+                )
+                if not cur.fetchone():
+                    cur.execute(
+                        """
+                        INSERT INTO susu_customers (
+                          record_id, account_number, branch_name, customer_status, payload
+                        )
+                        SELECT
+                          item->>'id', item->>'account_number',
+                          UPPER(COALESCE(NULLIF(item->>'branch_name', ''), NULLIF(item->>'branch', ''), 'UNKNOWN')),
+                          LOWER(COALESCE(NULLIF(item->>'customer_status', ''), 'active')),
+                          item
+                        FROM portal_store,
+                             LATERAL jsonb_array_elements(payload) AS item
+                        WHERE store_key = %s
+                          AND COALESCE(item->>'id', '') <> ''
+                          AND COALESCE(item->>'account_number', '') ~ '^[0-9]{13}$'
+                        ON CONFLICT (record_id) DO NOTHING
+                        """,
+                        (os.path.basename(CUSTOMERS_STORE_PATH),),
+                    )
+                    cur.execute(
+                        """
+                        INSERT INTO susu_collections (
+                          record_id, customer_id, transaction_reference, account_number,
+                          amount, agent_id, branch_name, transaction_date,
+                          collection_status, idempotency_key, payload
+                        )
+                        SELECT
+                          item->>'id', item->>'customer_id', item->>'transaction_reference',
+                          item->>'account_number', (item->>'amount')::numeric,
+                          item->>'agent_id',
+                          UPPER(COALESCE(NULLIF(item->>'branch_name', ''), NULLIF(item->>'branch_id', ''), 'UNKNOWN')),
+                          (item->>'transaction_date')::date,
+                          LOWER(COALESCE(NULLIF(item->>'status', ''), 'completed')),
+                          NULLIF(item->>'idempotency_key', ''), item
+                        FROM portal_store,
+                             LATERAL jsonb_array_elements(payload) AS item
+                        WHERE store_key = %s
+                          AND COALESCE(item->>'id', '') <> ''
+                          AND COALESCE(item->>'customer_id', '') <> ''
+                          AND COALESCE(item->>'transaction_reference', '') <> ''
+                          AND COALESCE(item->>'account_number', '') ~ '^[0-9]{13}$'
+                          AND COALESCE(item->>'amount', '') ~ '^[0-9]+(\\.[0-9]+)?$'
+                          AND (item->>'amount')::numeric > 0
+                          AND COALESCE(item->>'agent_id', '') <> ''
+                          AND COALESCE(item->>'transaction_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+                        ON CONFLICT (record_id) DO NOTHING
+                        """,
+                        (os.path.basename(COLLECTIONS_STORE_PATH),),
+                    )
+                    cur.execute(
+                        """
+                        INSERT INTO susu_deposit_guards (
+                          customer_id, transaction_date, agent_id, idempotency_key, collection_id
+                        )
+                        SELECT DISTINCT ON (customer_id, transaction_date)
+                          customer_id, transaction_date, agent_id, idempotency_key, record_id
+                        FROM susu_collections
+                        WHERE collection_status = 'completed'
+                        ORDER BY customer_id, transaction_date, created_at
+                        ON CONFLICT DO NOTHING
+                        """
+                    )
+                    cur.execute(
+                        "INSERT INTO portal_schema_migrations (migration_key) VALUES (%s)",
+                        ("normalized-financial-records-v1",),
+                    )
             conn.commit()
         _PG_TABLE_READY = True
 
@@ -380,37 +523,18 @@ class PortalDataLock:
 DATA_LOCK = PortalDataLock()
 
 
-@app.before_request
-def block_disabled_content_modules():
-    path = request.path.rstrip("/")
-    disabled_prefixes = (
-        "/api/content/announcements",
-        "/api/content/forms",
-        "/api/content/training",
-        "/api/uploads/training-video",
-        "/api/uploads/training-document",
-        "/api/uploads/announcement-asset",
-    )
-    if any(path.startswith(prefix) for prefix in disabled_prefixes):
-        return jsonify({"error": "This module is disabled for the SUSU collection system."}), 410
-    return None
-
-
 STORE_DEFAULTS: dict[str, object] = {
     PRESENCE_STORE_PATH: {},
     PASSWORD_STORE_PATH: {},
     USERS_STORE_PATH: [],
     PENDING_VERIFICATIONS_PATH: {},
     RESET_TOKENS_PATH: {},
+    AGENT_SETUP_TOKENS_PATH: {},
     SESSIONS_STORE_PATH: {},
-    ANNOUNCEMENTS_STORE_PATH: [],
-    FORMS_STORE_PATH: [],
-    TRAINING_VIDEOS_STORE_PATH: [],
-    TRAINING_DOCUMENTS_STORE_PATH: [],
+    PORTAL_AUTHORIZATIONS_PATH: {},
+    PRIVILEGED_MFA_PATH: {},
+    AUTH_RATE_LIMITS_PATH: {},
     NOTIFICATIONS_STORE_PATH: [],
-    TRAINING_VIDEO_PROGRESS_STORE_PATH: [],
-    TRAINING_DOCUMENT_OPENS_STORE_PATH: [],
-    TRAINING_REMINDERS_STORE_PATH: [],
     AUDIT_LOGS_STORE_PATH: [],
     CUSTOMERS_STORE_PATH: [],
     COLLECTIONS_STORE_PATH: [],
@@ -468,6 +592,21 @@ def add_cors_headers(response):
         response.headers["Vary"] = "Origin"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
     response.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
+    if origin and ("*" in origins or origin in origins):
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; "
+        "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; "
+        "worker-src 'self' blob:; manifest-src 'self'"
+    )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=()"
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    if session_cookie_secure():
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
 
 
@@ -626,163 +765,11 @@ def normalize_local_filename(value: object) -> str:
     return filename
 
 
-def normalize_form_file_url(value: object) -> str:
-    raw = str(value or "").strip()
-    if not raw:
-        raise ValueError("Form link is required")
-    if "docs.google.com" in raw:
-        return raw
-    drive_id = extract_drive_file_id(raw)
-    if not drive_id:
-        raise ValueError("A valid Google Drive link or file ID is required")
-    return drive_id
-
-
-def normalize_announcement_payload(data: dict, actor: dict, existing: dict | None = None) -> dict:
-    title = normalize_non_empty_title(
-        data.get("title", existing.get("title") if existing else ""),
-        "Announcement title",
-    )
-    content = str(data.get("content", existing.get("content") if existing else "")).strip()
-    if not content:
-        raise ValueError("Announcement content is required")
-    category = str(data.get("category", existing.get("category") if existing else "")).strip() or actor["department"]
-    poll = data.get("poll", existing.get("poll") if existing else None)
-    if poll is not None and not isinstance(poll, dict):
-        raise ValueError("Poll data is invalid")
-    allow_download = bool(
-        data.get("allowDownload", existing.get("allowDownload", True) if existing else True)
-    )
-    image_url = data.get("imageUrl", existing.get("imageUrl") if existing else None)
-    file_url = data.get("fileUrl", existing.get("fileUrl") if existing else None)
-    attachment_name = data.get("attachmentName", existing.get("attachmentName") if existing else None)
-    visibility, department = normalize_visibility_and_department(
-        {
-            "visibility": data.get("visibility", existing.get("visibility") if existing else "General"),
-            "department": data.get("department", existing.get("department") if existing else None),
-        }
-    )
-    branch_scope, department_scope = derive_content_scope(
-        data,
-        visibility=visibility,
-        department=department,
-        existing=existing,
-    )
-    return {
-        "title": title,
-        "content": content,
-        "category": category,
-        "imageUrl": image_url,
-        "fileUrl": file_url,
-        "attachmentName": attachment_name,
-        "allowDownload": allow_download,
-        "poll": poll if isinstance(poll, dict) else None,
-        "visibility": visibility,
-        "department": department,
-        "branchScope": branch_scope,
-        "departmentScope": department_scope,
-    }
-
-
-def normalize_training_video_payload(data: dict, actor: dict) -> dict:
-    title = normalize_non_empty_title(data.get("title"), "Video title")
-    visibility, department = normalize_visibility_and_department(data)
-    branch_scope, department_scope = derive_content_scope(
-        data,
-        visibility=visibility,
-        department=department,
-    )
-    storage_type = normalize_storage_type(data.get("storageType", "Drive"))
-    if storage_type == "Drive":
-        drive_ref = extract_drive_file_id(data.get("driveRef") or data.get("videoUrl"))
-        if not drive_ref:
-            raise ValueError("A valid Google Drive file ID or link is required")
-        video_url = f"DRIVE:{drive_ref}"
-        local_filename = None
-    else:
-        local_filename = normalize_local_filename(data.get("localFilename"))
-        video_url = f"LOCAL:{local_filename}"
-        drive_ref = None
-    return {
-        "id": next_content_id(load_json_list_store(TRAINING_VIDEOS_STORE_PATH)),
-        "title": title,
-        "description": str(data.get("description", "")).strip(),
-        "videoUrl": video_url,
-        "thumbnailUrl": data.get("thumbnailUrl"),
-        "duration": max(0, int(data.get("duration", 0) or 0)),
-        "category": str(data.get("category", "")).strip() or (department or "General"),
-        "visibleTo": [],
-        "visibility": visibility,
-        "department": department,
-        "branchScope": branch_scope,
-        "departmentScope": department_scope,
-        "isMandatory": bool(data.get("isMandatory", False)),
-        "allowDownload": bool(data.get("allowDownload", False)),
-        "storageType": storage_type,
-        "driveRef": drive_ref,
-        "localFilename": local_filename,
-        "uploadedBy": actor["fullname"],
-        "uploadedAt": now_ms(),
-        "viewCount": max(0, int(data.get("viewCount", 0) or 0)),
-        "isArchived": bool(data.get("isArchived", False)),
-    }
-
-
-def normalize_training_document_payload(data: dict, actor: dict) -> dict:
-    title = normalize_non_empty_title(data.get("title"), "Document title")
-    visibility, department = normalize_visibility_and_department(data)
-    branch_scope, department_scope = derive_content_scope(
-        data,
-        visibility=visibility,
-        department=department,
-    )
-    storage_type = normalize_storage_type(data.get("storageType", "Drive"))
-    if storage_type == "Drive":
-        drive_ref = str(data.get("driveRef") or "").strip()
-        file_url_raw = str(data.get("fileUrl") or "").strip()
-        if "docs.google.com" in file_url_raw:
-            file_url = file_url_raw
-            drive_ref = file_url_raw
-        else:
-            drive_ref = extract_drive_file_id(drive_ref or file_url_raw)
-            if not drive_ref:
-                raise ValueError("A valid Google Drive document link or file ID is required")
-            file_url = f"DRIVE:{drive_ref}"
-        local_filename = None
-    else:
-        local_filename = normalize_local_filename(data.get("localFilename"))
-        file_url = f"LOCAL:{local_filename}"
-        drive_ref = None
-    return {
-        "id": next_content_id(load_json_list_store(TRAINING_DOCUMENTS_STORE_PATH)),
-        "title": title,
-        "description": str(data.get("description", "")).strip(),
-        "fileUrl": file_url,
-        "fileType": str(data.get("fileType", "")).strip() or "application/octet-stream",
-        "category": str(data.get("category", "")).strip() or (department or "General"),
-        "visibleTo": [],
-        "visibility": visibility,
-        "department": department,
-        "branchScope": branch_scope,
-        "departmentScope": department_scope,
-        "isMandatory": bool(data.get("isMandatory", False)),
-        "allowDownload": bool(data.get("allowDownload", False)),
-        "storageType": storage_type,
-        "driveRef": drive_ref,
-        "localFilename": local_filename,
-        "uploadedBy": actor["fullname"],
-        "uploadedAt": now_ms(),
-        "downloadCount": max(0, int(data.get("downloadCount", 0) or 0)),
-        "isArchived": bool(data.get("isArchived", False)),
-    }
-
-
 def parse_session_token() -> str:
     header = str(request.headers.get("Authorization", "")).strip()
     if header.startswith("Bearer "):
         return header[7:].strip()
-    query_token = str(request.args.get("sessionToken", "")).strip()
-    return query_token
+    return str(request.cookies.get(SESSION_COOKIE_NAME, "") or "").strip()
 
 
 def validate_email(email: str) -> str:
@@ -1287,12 +1274,150 @@ def issue_agent_setup_token(username: str, phone: str) -> dict:
     return tokens[normalized_username]
 
 
+def normalized_financial_table(path: str) -> str | None:
+    absolute_path = os.path.abspath(path)
+    if absolute_path == os.path.abspath(CUSTOMERS_STORE_PATH):
+        return "susu_customers"
+    if absolute_path == os.path.abspath(COLLECTIONS_STORE_PATH):
+        return "susu_collections"
+    return None
+
+
+def load_normalized_financial_store(table_name: str) -> list[dict]:
+    ensure_pg_store_table()
+    order_column = "updated_at" if table_name == "susu_customers" else "created_at"
+    with pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT payload FROM {table_name} ORDER BY {order_column}, record_id")
+            return [row[0] for row in cur.fetchall() if isinstance(row[0], dict)]
+
+
+def save_normalized_financial_store(table_name: str, items: list[dict]) -> None:
+    ensure_pg_store_table()
+    normalized_items = [item for item in items if isinstance(item, dict)]
+    record_ids = []
+    with DATA_LOCK:
+        with pg_connect() as conn:
+            with conn.cursor() as cur:
+                for item in normalized_items:
+                    record_id = str(item.get("id") or "").strip()
+                    account_number = str(item.get("account_number") or "").strip()
+                    if not record_id:
+                        raise ValueError("Financial records must have an id")
+                    if len(account_number) != 13 or not account_number.isdigit():
+                        raise ValueError("Financial records must have a valid 13-digit account number")
+                    record_ids.append(record_id)
+                    if table_name == "susu_customers":
+                        cur.execute(
+                            """
+                            INSERT INTO susu_customers (
+                              record_id, account_number, branch_name, customer_status, payload, updated_at
+                            ) VALUES (%s, %s, %s, %s, %s::jsonb, NOW())
+                            ON CONFLICT (record_id) DO UPDATE SET
+                              account_number = EXCLUDED.account_number,
+                              branch_name = EXCLUDED.branch_name,
+                              customer_status = EXCLUDED.customer_status,
+                              payload = EXCLUDED.payload,
+                              updated_at = NOW()
+                            """,
+                            (
+                                record_id,
+                                account_number,
+                                str(item.get("branch_name") or item.get("branch") or "UNKNOWN").strip().upper(),
+                                str(item.get("customer_status") or "active").strip().lower(),
+                                json.dumps(item, ensure_ascii=True),
+                            ),
+                        )
+                    else:
+                        transaction_date = str(item.get("transaction_date") or "").strip()
+                        try:
+                            time.strptime(transaction_date, "%Y-%m-%d")
+                            amount = round(float(item.get("amount") or 0), 2)
+                        except (TypeError, ValueError):
+                            raise ValueError("Collection records must have a valid amount and transaction date")
+                        if amount <= 0:
+                            raise ValueError("Collection amounts must be greater than zero")
+                        cur.execute(
+                            """
+                            INSERT INTO susu_collections (
+                              record_id, customer_id, transaction_reference, account_number,
+                              amount, agent_id, branch_name, transaction_date,
+                              collection_status, idempotency_key, payload, updated_at
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::date, %s, %s, %s::jsonb, NOW())
+                            ON CONFLICT (record_id) DO UPDATE SET
+                              customer_id = EXCLUDED.customer_id,
+                              transaction_reference = EXCLUDED.transaction_reference,
+                              account_number = EXCLUDED.account_number,
+                              amount = EXCLUDED.amount,
+                              agent_id = EXCLUDED.agent_id,
+                              branch_name = EXCLUDED.branch_name,
+                              transaction_date = EXCLUDED.transaction_date,
+                              collection_status = EXCLUDED.collection_status,
+                              idempotency_key = EXCLUDED.idempotency_key,
+                              payload = EXCLUDED.payload,
+                              updated_at = NOW()
+                            """,
+                            (
+                                record_id,
+                                str(item.get("customer_id") or "").strip(),
+                                str(item.get("transaction_reference") or "").strip(),
+                                account_number,
+                                amount,
+                                str(item.get("agent_id") or "").strip(),
+                                str(item.get("branch_name") or item.get("branch_id") or "UNKNOWN").strip().upper(),
+                                transaction_date,
+                                str(item.get("status") or "completed").strip().lower(),
+                                str(item.get("idempotency_key") or "").strip() or None,
+                                json.dumps(item, ensure_ascii=True),
+                            ),
+                        )
+                if record_ids:
+                    cur.execute(
+                        f"DELETE FROM {table_name} WHERE NOT (record_id = ANY(%s))",
+                        (record_ids,),
+                    )
+                else:
+                    cur.execute(f"DELETE FROM {table_name}")
+                if table_name == "susu_collections":
+                    cur.execute(
+                        """
+                        DELETE FROM susu_deposit_guards AS guard
+                        WHERE NOT EXISTS (
+                          SELECT 1 FROM susu_collections AS collection
+                          WHERE collection.record_id = guard.collection_id
+                            AND collection.collection_status = 'completed'
+                        )
+                        """
+                    )
+                    cur.execute(
+                        """
+                        INSERT INTO susu_deposit_guards (
+                          customer_id, transaction_date, agent_id, idempotency_key, collection_id
+                        )
+                        SELECT DISTINCT ON (customer_id, transaction_date)
+                          customer_id, transaction_date, agent_id, idempotency_key, record_id
+                        FROM susu_collections
+                        WHERE collection_status = 'completed'
+                        ORDER BY customer_id, transaction_date, created_at
+                        ON CONFLICT DO NOTHING
+                        """
+                    )
+            conn.commit()
+
+
 def load_json_list_store(path: str) -> list[dict]:
+    table_name = normalized_financial_table(path) if pg_enabled() else None
+    if table_name:
+        return load_normalized_financial_store(table_name)
     raw = read_json_file(path, [])
     return raw if isinstance(raw, list) else []
 
 
 def save_json_list_store(path: str, items: list[dict]) -> None:
+    table_name = normalized_financial_table(path) if pg_enabled() else None
+    if table_name:
+        save_normalized_financial_store(table_name, items)
+        return
     atomic_write_json(path, items)
 
 
@@ -1465,20 +1590,6 @@ def apply_portal_renames(branch_renames: dict[str, str], department_renames: dic
             save_json_list_store(path, items)
             summary[summary_key] = changed_count
 
-    content_stores = [ANNOUNCEMENTS_STORE_PATH, FORMS_STORE_PATH, TRAINING_VIDEOS_STORE_PATH, TRAINING_DOCUMENTS_STORE_PATH]
-    content_count = 0
-    for path in content_stores:
-        items = load_json_list_store(path)
-        changed_count = 0
-        for item in items:
-            changed = rename_item_fields(item, department_renames, ["department"])
-            changed = rename_scope_fields(item, branch_renames, department_renames) or changed
-            if changed:
-                changed_count += 1
-        if changed_count:
-            save_json_list_store(path, items)
-            content_count += changed_count
-    summary["content"] = content_count
     return summary
 
 
@@ -1545,11 +1656,11 @@ def load_portal_settings_store() -> dict:
         "portalControlPassword": str(raw.get("portalControlPassword") or DEFAULT_PORTAL_SETTINGS["portalControlPassword"]),
         "itAccessCode": str(raw.get("itAccessCode") or DEFAULT_PORTAL_SETTINGS["itAccessCode"]),
         "hrAccessCode": str(raw.get("hrAccessCode") or DEFAULT_PORTAL_SETTINGS["hrAccessCode"]),
-        "sessionDays": normalize_positive_number(raw.get("sessionDays"), DEFAULT_PORTAL_SETTINGS["sessionDays"]),
+        "sessionMinutes": min(60, normalize_positive_number(raw.get("sessionMinutes"), DEFAULT_PORTAL_SETTINGS["sessionMinutes"])),
+        "absoluteSessionHours": min(24, normalize_positive_number(raw.get("absoluteSessionHours"), DEFAULT_PORTAL_SETTINGS["absoluteSessionHours"])),
+        "sensitiveReauthMinutes": min(30, normalize_positive_number(raw.get("sensitiveReauthMinutes"), DEFAULT_PORTAL_SETTINGS["sensitiveReauthMinutes"])),
         "verificationMinutes": normalize_positive_number(raw.get("verificationMinutes"), DEFAULT_PORTAL_SETTINGS["verificationMinutes"]),
         "passwordResetMinutes": normalize_positive_number(raw.get("passwordResetMinutes"), DEFAULT_PORTAL_SETTINGS["passwordResetMinutes"]),
-        "videoUploadLimitMb": normalize_positive_number(raw.get("videoUploadLimitMb"), DEFAULT_PORTAL_SETTINGS["videoUploadLimitMb"]),
-        "documentUploadLimitMb": normalize_positive_number(raw.get("documentUploadLimitMb"), DEFAULT_PORTAL_SETTINGS["documentUploadLimitMb"]),
         "dashboardLabel": str(raw.get("dashboardLabel") or DEFAULT_PORTAL_SETTINGS["dashboardLabel"]),
         "trainingLabel": str(raw.get("trainingLabel") or DEFAULT_PORTAL_SETTINGS["trainingLabel"]),
         "formsLabel": str(raw.get("formsLabel") or DEFAULT_PORTAL_SETTINGS["formsLabel"]),
@@ -1587,6 +1698,47 @@ def portal_control_password_matches(candidate: object, expected: str | None = No
     return bool(configured) and hmac.compare_digest(supplied, configured)
 
 
+def load_portal_authorizations() -> dict[str, dict]:
+    raw = read_json_file(PORTAL_AUTHORIZATIONS_PATH, {})
+    if not isinstance(raw, dict):
+        return {}
+    current = now_seconds()
+    return {
+        str(token_hash): entry
+        for token_hash, entry in raw.items()
+        if isinstance(entry, dict)
+        and str(entry.get("userId", "")).strip()
+        and str(entry.get("sessionHash", "")).strip()
+        and int(entry.get("expiresAt", 0) or 0) > current
+    }
+
+
+def issue_portal_authorization(user: dict, session_token: str) -> tuple[str, int]:
+    token = secrets.token_urlsafe(32)
+    expires_at = now_seconds() + PORTAL_AUTHORIZATION_MINUTES * 60
+    authorizations = load_portal_authorizations()
+    authorizations[session_token_hash(token)] = {
+        "userId": user["id"],
+        "sessionHash": session_token_hash(session_token),
+        "expiresAt": expires_at,
+    }
+    atomic_write_json(PORTAL_AUTHORIZATIONS_PATH, authorizations)
+    return token, expires_at
+
+
+def portal_authorization_error(data: dict, user: dict, session_token: str):
+    token = str(data.get("portalAuthorization", "") or "").strip()
+    entry = load_portal_authorizations().get(session_token_hash(token)) if token else None
+    valid = bool(
+        entry
+        and hmac.compare_digest(str(entry.get("userId", "")), str(user.get("id", "")))
+        and hmac.compare_digest(str(entry.get("sessionHash", "")), session_token_hash(session_token))
+    )
+    if not valid:
+        return jsonify({"error": "Portal Control authorization expired. Unlock Portal Control again."}), 403
+    return None
+
+
 def next_content_id(items: list[dict], floor: int = 1000) -> int:
     current = floor - 1
     for item in items:
@@ -1608,22 +1760,40 @@ def rate_limit_key(scope: str, identifier: object) -> str:
     return f"{scope}:{request_ip_address()}:{str(identifier or '').strip().lower()}"
 
 
-def auth_rate_limited(key: str) -> bool:
+def load_auth_rate_limits() -> dict[str, list[int]]:
+    raw = read_json_file(AUTH_RATE_LIMITS_PATH, {})
+    if not isinstance(raw, dict):
+        return {}
     cutoff = now_seconds() - RATE_LIMIT_WINDOW_SECONDS
-    attempts = [stamp for stamp in FAILED_AUTH_ATTEMPTS.get(key, []) if stamp >= cutoff]
-    FAILED_AUTH_ATTEMPTS[key] = attempts
+    return {
+        str(key): [int(stamp) for stamp in stamps if int(stamp or 0) >= cutoff]
+        for key, stamps in raw.items()
+        if isinstance(stamps, list)
+    }
+
+
+def auth_rate_limited(key: str) -> bool:
+    limits = load_auth_rate_limits()
+    attempts = limits.get(key, [])
+    atomic_write_json(AUTH_RATE_LIMITS_PATH, {item: stamps for item, stamps in limits.items() if stamps})
     return len(attempts) >= RATE_LIMIT_MAX_ATTEMPTS
 
 
 def record_auth_failure(key: str) -> None:
-    cutoff = now_seconds() - RATE_LIMIT_WINDOW_SECONDS
-    attempts = [stamp for stamp in FAILED_AUTH_ATTEMPTS.get(key, []) if stamp >= cutoff]
-    attempts.append(now_seconds())
-    FAILED_AUTH_ATTEMPTS[key] = attempts[-RATE_LIMIT_MAX_ATTEMPTS:]
+    with DATA_LOCK:
+        limits = load_auth_rate_limits()
+        attempts = limits.get(key, [])
+        attempts.append(now_seconds())
+        limits[key] = attempts[-RATE_LIMIT_MAX_ATTEMPTS:]
+        atomic_write_json(AUTH_RATE_LIMITS_PATH, limits)
 
 
 def clear_auth_failures(key: str) -> None:
-    FAILED_AUTH_ATTEMPTS.pop(key, None)
+    with DATA_LOCK:
+        limits = load_auth_rate_limits()
+        if key in limits:
+            limits.pop(key, None)
+            atomic_write_json(AUTH_RATE_LIMITS_PATH, limits)
 
 
 def compact_audit_target(target: object) -> str:
@@ -1695,7 +1865,39 @@ def load_audit_logs_store() -> list[dict]:
 
 
 def save_audit_logs_store(items: list[dict]) -> None:
-    save_json_list_store(AUDIT_LOGS_STORE_PATH, items[:10000])
+    save_json_list_store(AUDIT_LOGS_STORE_PATH, items)
+
+
+def merge_audit_logs(existing: list[dict], imported: list[dict]) -> list[dict]:
+    merged = list(existing)
+    signatures = {
+        (
+            int(item.get("timestamp", 0) or 0),
+            str(item.get("actorId", "")),
+            str(item.get("action", "")),
+            str(item.get("target", "")),
+        )
+        for item in merged
+    }
+    next_id = next_content_id(merged, floor=1)
+    for item in imported:
+        if not isinstance(item, dict):
+            continue
+        signature = (
+            int(item.get("timestamp", 0) or 0),
+            str(item.get("actorId", "")),
+            str(item.get("action", "")),
+            str(item.get("target", "")),
+        )
+        if not signature[0] or not signature[2] or signature in signatures:
+            continue
+        restored = dict(item)
+        restored["id"] = next_id
+        next_id += 1
+        merged.append(restored)
+        signatures.add(signature)
+    merged.sort(key=lambda item: int(item.get("timestamp", 0) or 0), reverse=True)
+    return merged
 
 
 def record_audit_log(
@@ -1732,27 +1934,15 @@ def has_recent_backup_export(actor: dict, max_age_ms: int = 15 * 60 * 1000) -> b
 
 
 def backup_confirmation_error(actor: dict, confirmed: object):
+    session_token = parse_session_token()
+    reauth_error = recent_reauthentication_error(session_token) if session_token else None
+    if reauth_error:
+        return reauth_error
     if not confirmed:
         return jsonify({"error": "Export a backup before continuing."}), 400
     if not has_recent_backup_export(actor):
         return jsonify({"error": "Your backup confirmation has expired. Export a fresh backup before continuing."}), 400
     return None
-
-
-def record_content_audit(actor: dict, action: str, module: str, item: dict | None) -> None:
-    if not item:
-        return
-    record_audit_log(
-        actor,
-        action,
-        {
-            "module": module,
-            "id": int(item.get("id", 0) or 0),
-            "title": str(item.get("title", "")).strip(),
-            "branchScope": item_branch_scope(item),
-            "departmentScope": item_department_scope(item),
-        },
-    )
 
 
 def staff_audit_target(user: dict, extra: dict | None = None) -> dict:
@@ -1769,76 +1959,6 @@ def staff_audit_target(user: dict, extra: dict | None = None) -> dict:
     return target
 
 
-def load_training_video_progress_store() -> list[dict]:
-    items = load_json_list_store(TRAINING_VIDEO_PROGRESS_STORE_PATH)
-    normalized = []
-    for item in items:
-        try:
-            normalized.append(
-                {
-                    "userId": str(item.get("userId", "")).strip(),
-                    "videoId": int(item.get("videoId", 0) or 0),
-                    "progressPercent": max(0, min(100, int(item.get("progressPercent", 0) or 0))),
-                    "isComplete": bool(item.get("isComplete", False)),
-                    "lastWatched": int(item.get("lastWatched", 0) or 0),
-                }
-            )
-        except Exception:
-            continue
-    return [item for item in normalized if item["userId"] and item["videoId"] > 0]
-
-
-def save_training_video_progress_store(items: list[dict]) -> None:
-    atomic_write_json(TRAINING_VIDEO_PROGRESS_STORE_PATH, items)
-
-
-def load_training_document_opens_store() -> list[dict]:
-    items = load_json_list_store(TRAINING_DOCUMENT_OPENS_STORE_PATH)
-    normalized = []
-    for item in items:
-        try:
-            normalized.append(
-                {
-                    "userId": str(item.get("userId", "")).strip(),
-                    "documentId": int(item.get("documentId", 0) or 0),
-                    "openedAt": int(item.get("openedAt", 0) or 0),
-                }
-            )
-        except Exception:
-            continue
-    return [item for item in normalized if item["userId"] and item["documentId"] > 0]
-
-
-def save_training_document_opens_store(items: list[dict]) -> None:
-    atomic_write_json(TRAINING_DOCUMENT_OPENS_STORE_PATH, items)
-
-
-def load_training_reminders_store() -> list[dict]:
-    items = load_json_list_store(TRAINING_REMINDERS_STORE_PATH)
-    normalized = []
-    for item in items:
-        try:
-            normalized.append(
-                {
-                    "kind": str(item.get("kind", "")).strip(),
-                    "itemId": int(item.get("itemId", 0) or 0),
-                    "userId": str(item.get("userId", "")).strip(),
-                    "sentAt": int(item.get("sentAt", 0) or 0),
-                }
-            )
-        except Exception:
-            continue
-    return [
-        item
-        for item in normalized
-        if item["kind"] and item["itemId"] > 0 and item["userId"] and item["sentAt"] > 0
-    ]
-
-
-def save_training_reminders_store(items: list[dict]) -> None:
-    atomic_write_json(TRAINING_REMINDERS_STORE_PATH, items)
-
-
 def session_token_hash(token: str) -> str:
     return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
 
@@ -1852,13 +1972,23 @@ def load_sessions() -> dict[str, dict]:
     for token, item in raw.items():
         if not isinstance(token, str) or not isinstance(item, dict):
             continue
+        # Sessions created before idle/absolute expiry tracking are intentionally
+        # invalidated so an old 30-day token cannot bypass the tightened policy.
+        if "absoluteExpiresAt" not in item or "lastActivityAt" not in item:
+            continue
         user_id = str(item.get("userId", "")).strip()
         expires_at = int(item.get("expiresAt", 0) or 0)
-        if not user_id or expires_at <= current:
+        absolute_expires_at = int(item.get("absoluteExpiresAt", expires_at) or 0)
+        last_activity_at = int(item.get("lastActivityAt", current) or 0)
+        recent_auth_at = int(item.get("recentAuthAt", last_activity_at) or 0)
+        if not user_id or expires_at <= current or absolute_expires_at <= current:
             continue
         sessions[token] = {
             "userId": user_id,
             "expiresAt": expires_at,
+            "absoluteExpiresAt": absolute_expires_at,
+            "lastActivityAt": last_activity_at,
+            "recentAuthAt": recent_auth_at,
         }
     return sessions
 
@@ -1878,12 +2008,54 @@ def save_sessions(store: dict[str, dict]) -> None:
 def issue_session(user_id: str) -> str:
     sessions = load_sessions()
     token = secrets.token_urlsafe(32)
+    settings = load_portal_settings_store()
+    current = now_seconds()
     sessions[session_token_hash(token)] = {
         "userId": user_id,
-        "expiresAt": now_seconds() + int(load_portal_settings_store()["sessionDays"]) * 24 * 60 * 60,
+        "expiresAt": current + int(settings["sessionMinutes"]) * 60,
+        "absoluteExpiresAt": current + int(settings["absoluteSessionHours"]) * 60 * 60,
+        "lastActivityAt": current,
+        "recentAuthAt": current,
     }
     save_sessions(sessions)
     return token
+
+
+def session_cookie_secure() -> bool:
+    configured_url = portal_public_url()
+    if configured_url:
+        return urlparse(configured_url).scheme.lower() == "https"
+    forwarded_proto = str(request.headers.get("X-Forwarded-Proto", "") or "").split(",")[0].strip().lower()
+    return request.is_secure or forwarded_proto == "https"
+
+
+def set_session_cookie(response, token: str):
+    max_age = int(load_portal_settings_store()["absoluteSessionHours"]) * 60 * 60
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        token,
+        max_age=max_age,
+        secure=session_cookie_secure(),
+        httponly=True,
+        samesite="Strict",
+        path="/",
+    )
+    return response
+
+
+def clear_session_cookie(response):
+    response.delete_cookie(
+        SESSION_COOKIE_NAME,
+        secure=session_cookie_secure(),
+        httponly=True,
+        samesite="Strict",
+        path="/",
+    )
+    return response
+
+
+def authenticated_response(user: dict, token: str):
+    return set_session_cookie(jsonify({"ok": True, "user": user}), token)
 
 
 def revoke_session(token: str) -> None:
@@ -1918,7 +2090,31 @@ def require_authenticated_user():
     if not user or user["isArchived"] or not user["isActive"] or not user["isVerified"]:
         revoke_session(token)
         return None, None, (jsonify({"error": "Invalid or expired session"}), 401)
+    current = now_seconds()
+    if current - int(session.get("lastActivityAt", current) or current) >= 60:
+        settings = load_portal_settings_store()
+        session["lastActivityAt"] = current
+        session["expiresAt"] = min(
+            current + int(settings["sessionMinutes"]) * 60,
+            int(session.get("absoluteExpiresAt", current) or current),
+        )
+        sessions[session_token_hash(token)] = session
+        sessions.pop(token, None)
+        save_sessions(sessions)
     return token, user, None
+
+
+def recent_reauthentication_error(session_token: str):
+    sessions = load_sessions()
+    session = sessions.get(session_token_hash(session_token)) or sessions.get(session_token)
+    settings = load_portal_settings_store()
+    cutoff = now_seconds() - int(settings["sensitiveReauthMinutes"]) * 60
+    if not session or int(session.get("recentAuthAt", 0) or 0) < cutoff:
+        return jsonify({
+            "error": "Confirm your password before continuing with this sensitive action.",
+            "code": "REAUTHENTICATION_REQUIRED",
+        }), 428
+    return None
 
 
 def require_staff_manager():
@@ -1936,17 +2132,6 @@ def require_owner_admin():
         return token, user, error
     if not is_owner_admin(user):
         return token, user, (jsonify({"error": "Owner admin access required"}), 403)
-    return token, user, None
-
-
-def require_module_manager(permission_key: str):
-    token, user, error = require_authenticated_user()
-    if error:
-        return token, user, error
-    if permission_key in DISABLED_CONTENT_MODULES:
-        return token, user, (jsonify({"error": "This module is disabled for the SUSU collection system."}), 410)
-    if not user_has_permission(user, permission_key):
-        return token, user, (jsonify({"error": "Admin access required"}), 403)
     return token, user, None
 
 
@@ -2046,6 +2231,64 @@ def send_verification_code_email(email: str, code: str) -> None:
     send_mail(email, "Bawjiase SUSU Collection Portal - Email Verification Code", text_body, html_body)
 
 
+def privileged_mfa_required(user: dict) -> bool:
+    return str(user.get("role", "")).strip() in {OWNER_ADMIN_ROLE, "Supervisor"}
+
+
+def load_privileged_mfa_challenges() -> dict[str, dict]:
+    raw = read_json_file(PRIVILEGED_MFA_PATH, {})
+    if not isinstance(raw, dict):
+        return {}
+    current = now_seconds()
+    return {
+        str(challenge_id): entry
+        for challenge_id, entry in raw.items()
+        if isinstance(entry, dict)
+        and str(entry.get("userId", "")).strip()
+        and int(entry.get("expiresAt", 0) or 0) > current
+    }
+
+
+def privileged_mfa_code_hash(challenge_id: str, code: str) -> str:
+    return hashlib.sha256(f"{challenge_id}:{code}".encode("utf-8")).hexdigest()
+
+
+def issue_privileged_mfa_challenge(user: dict) -> dict:
+    challenge_id = secrets.token_urlsafe(24)
+    code = generate_verification_code()
+    expires_at = now_seconds() + 10 * 60
+    challenges = load_privileged_mfa_challenges()
+    challenges[challenge_id] = {
+        "userId": user["id"],
+        "codeHash": privileged_mfa_code_hash(challenge_id, code),
+        "expiresAt": expires_at,
+        "attempts": 0,
+    }
+    atomic_write_json(PRIVILEGED_MFA_PATH, challenges)
+    text_body = (
+        f"Your BCB SUSU privileged login verification code is {code}.\n\n"
+        "It expires in 10 minutes. If you did not attempt to sign in, contact the system owner immediately."
+    )
+    html_body = (
+        "<div style='font-family:Arial,sans-serif;max-width:560px;margin:auto;padding:24px'>"
+        "<h2 style='color:#047857'>Privileged login verification</h2>"
+        f"<p>Your verification code is:</p><p style='font-size:28px;font-weight:700;letter-spacing:6px'>{code}</p>"
+        "<p>This code expires in 10 minutes.</p></div>"
+    )
+    is_test_mode = str(load_portal_settings_store().get("appMode", "test")).strip().lower() != "live"
+    try:
+        send_mail(user["email"], "BCB SUSU privileged login verification", text_body, html_body)
+    except Exception:
+        if not is_test_mode:
+            challenges.pop(challenge_id, None)
+            atomic_write_json(PRIVILEGED_MFA_PATH, challenges)
+            raise
+    result = {"challengeId": challenge_id, "expiresAt": expires_at}
+    if is_test_mode:
+        result["testCode"] = code
+    return result
+
+
 def send_password_reset_link_email(email: str, reset_url: str) -> None:
     text_body = (
         "Dear Staff,\n\n"
@@ -2082,34 +2325,6 @@ def build_portal_link(path: str) -> str | None:
     if not base:
         return None
     return f"{base}{path if path.startswith('/') else f'/{path}'}"
-
-
-def eligible_users_for_visibility(visibility: str, department: str | None = None) -> list[dict]:
-    normalized_visibility = str(visibility or "General").strip()
-    normalized_department = str(department or "").strip().upper()
-    users = load_user_store()
-    eligible = [
-        user
-        for user in users
-        if user["isActive"] and user["isVerified"] and not user["isArchived"]
-    ]
-    if normalized_visibility == "Department" and normalized_department:
-        return [
-            user
-            for user in eligible
-            if str(user.get("department", "")).strip().upper() == normalized_department
-        ]
-    return eligible
-
-
-def item_branch_scope(item: dict) -> list[str]:
-    return normalize_scope_list(item.get("branchScope"), empty_default=["ALL"])
-
-
-def item_department_scope(item: dict) -> list[str]:
-    derived_department = str(item.get("department", "")).strip().upper()
-    empty_default = [derived_department] if derived_department and str(item.get("visibility", "General")).strip() == "Department" else ["ALL"]
-    return normalize_scope_list(item.get("departmentScope"), empty_default=empty_default)
 
 
 def value_in_scope(scope: list[str], current_value: str) -> bool:
@@ -2265,62 +2480,8 @@ def manageable_scope_message(user: dict) -> str:
     return f"You can only manage these SUSU branches: {', '.join(managed_branches)}."
 
 
-def ensure_content_management_access(
-    user: dict,
-    *,
-    permission_key: str,
-    branch_scope: list[str],
-    department_scope: list[str],
-) -> tuple[bool, tuple]:
-    if not user_has_permission(user, permission_key):
-        return False, (jsonify({"error": "You do not have permission to manage this module"}), 403)
-    if not can_manage_scope(user, branch_scope, department_scope):
-        return False, (
-            jsonify({"error": manageable_scope_message(user)}),
-            403,
-        )
-    return True, ()
-
-
 def scoped_access_denial(user: dict):
     return jsonify({"error": manageable_scope_message(user)}), 403
-
-
-def eligible_users_for_item(item: dict) -> list[dict]:
-    users = load_user_store()
-    eligible = [
-        user
-        for user in users
-        if user["isActive"] and user["isVerified"] and not user["isArchived"]
-    ]
-    branch_scope = item_branch_scope(item)
-    department_scope = item_department_scope(item)
-    return [
-        user
-        for user in eligible
-        if value_in_scope(branch_scope, str(user.get("branch", "")))
-        and value_in_scope(department_scope, str(user.get("department", "")))
-    ]
-
-
-def user_can_access_item(user: dict, item: dict) -> bool:
-    if bool(item.get("isArchived", False)):
-        return False
-    return value_in_scope(item_branch_scope(item), str(user.get("branch", ""))) and value_in_scope(
-        item_department_scope(item), str(user.get("department", ""))
-    )
-
-
-def filter_items_for_user(items: list[dict], user: dict) -> list[dict]:
-    return [item for item in items if user_can_access_item(user, item)]
-
-
-def user_can_manage_item(user: dict, item: dict, permission_key: str) -> bool:
-    if is_global_manager(user):
-        return True
-    if not user_has_permission(user, permission_key):
-        return False
-    return can_manage_scope(user, item_branch_scope(item), item_department_scope(item))
 
 
 def create_notifications_for_users(
@@ -2374,242 +2535,6 @@ def notify_active_managers(*, kind: str, title: str, message: str, link_to: str 
     )
 
 
-def send_content_notification_email(
-    *,
-    to_email: str,
-    subject: str,
-    headline: str,
-    intro: str,
-    item_title: str,
-    link_to: str | None,
-) -> None:
-    action_line = f"Open the portal here: {link_to}" if link_to else "Open the SUSU collection portal to view the new item."
-    text_body = (
-        "Dear Staff,\n\n"
-        f"{intro}\n\n"
-        f"Item: {item_title}\n"
-        f"{action_line}\n\n"
-        "Bawjiase Community Bank PLC"
-    )
-    action_html = (
-        f'<p style="text-align: center; margin: 28px 0;">'
-        f'<a href="{link_to}" style="background: #15803d; color: #ffffff; padding: 12px 22px; border-radius: 8px; text-decoration: none; font-weight: 700;">Open Portal</a>'
-        f"</p>"
-        if link_to
-        else "<p>Open the SUSU collection portal to view the new item.</p>"
-    )
-    html_body = f"""
-    <html>
-      <body style="font-family: Arial, sans-serif; color: #1f2937; line-height: 1.6;">
-        <div style="max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e5e7eb; border-radius: 12px;">
-          <h2 style="color: #15803d; text-align: center;">{headline}</h2>
-          <p>Dear Staff,</p>
-          <p>{intro}</p>
-          <div style="margin: 18px 0; padding: 16px; background: #f0fdf4; border-radius: 10px; border: 1px solid #bbf7d0;">
-            <strong>{item_title}</strong>
-          </div>
-          {action_html}
-          <p style="font-weight: 700; color: #4b5563;">Bawjiase Community Bank PLC</p>
-        </div>
-      </body>
-    </html>
-    """
-    send_mail(to_email, subject, text_body, html_body)
-
-
-def fanout_content_notification(
-    *,
-    kind: str,
-    title: str,
-    message: str,
-    email_subject: str,
-    email_headline: str,
-    email_intro: str,
-    item_title: str,
-    visibility: str,
-    department: str | None,
-    link_to: str | None,
-    branch_scope: list[str] | None = None,
-    department_scope: list[str] | None = None,
-    send_external_emails: bool = False,
-) -> dict[str, int]:
-    users = eligible_users_for_item(
-        {
-            "visibility": visibility,
-            "department": department,
-            "branchScope": branch_scope or ["ALL"],
-            "departmentScope": department_scope or ([department] if department else ["ALL"]),
-        }
-    )
-    notification_count = create_notifications_for_users(
-        users,
-        kind=kind,
-        title=title,
-        message=message,
-        link_to=link_to,
-    )
-    email_count = 0
-    if send_external_emails:
-        for user in users:
-            email = str(user.get("email", "")).strip().lower()
-            if not email:
-                continue
-            try:
-                send_content_notification_email(
-                    to_email=email,
-                    subject=email_subject,
-                    headline=email_headline,
-                    intro=email_intro,
-                    item_title=item_title,
-                    link_to=build_portal_link(link_to) if link_to else None,
-                )
-                email_count += 1
-            except Exception:
-                app.logger.exception("Failed sending content notification email", extra={"email": email})
-    return {
-        "notifications": notification_count,
-        "emails": email_count,
-    }
-
-
-def serialize_video_progress(item: dict) -> dict:
-    return {
-        "videoId": int(item.get("videoId", 0) or 0),
-        "progressPercent": int(item.get("progressPercent", 0) or 0),
-        "isComplete": bool(item.get("isComplete", False)),
-        "lastWatched": int(item.get("lastWatched", 0) or 0),
-    }
-
-
-def serialize_document_open_state(item: dict | None) -> dict:
-    opened_at = int(item.get("openedAt", 0) or 0) if item else 0
-    return {
-        "isOpened": opened_at > 0,
-        "openedAt": opened_at or None,
-    }
-
-
-def get_video_watched_user_ids(video_id: int) -> set[str]:
-    return {
-        item["userId"]
-        for item in load_training_video_progress_store()
-        if int(item.get("videoId", 0) or 0) == video_id and int(item.get("progressPercent", 0) or 0) > 0
-    }
-
-
-def get_video_completed_user_ids(video_id: int) -> set[str]:
-    return {
-        item["userId"]
-        for item in load_training_video_progress_store()
-        if int(item.get("videoId", 0) or 0) == video_id and bool(item.get("isComplete", False))
-    }
-
-
-def get_document_opened_user_ids(document_id: int) -> set[str]:
-    return {
-        item["userId"]
-        for item in load_training_document_opens_store()
-        if int(item.get("documentId", 0) or 0) == document_id and int(item.get("openedAt", 0) or 0) > 0
-    }
-
-
-def refresh_training_video_counts(items: list[dict]) -> list[dict]:
-    watched_by_video: dict[int, set[str]] = {}
-    for entry in load_training_video_progress_store():
-        if int(entry.get("progressPercent", 0) or 0) <= 0:
-            continue
-        video_id = int(entry.get("videoId", 0) or 0)
-        watched_by_video.setdefault(video_id, set()).add(entry["userId"])
-    changed = False
-    for item in items:
-        video_id = int(item.get("id", 0) or 0)
-        count = len(watched_by_video.get(video_id, set()))
-        if int(item.get("viewCount", 0) or 0) != count:
-            item["viewCount"] = count
-            changed = True
-    if changed:
-        save_json_list_store(TRAINING_VIDEOS_STORE_PATH, items)
-    return items
-
-
-def refresh_training_document_counts(items: list[dict]) -> list[dict]:
-    opened_by_document: dict[int, set[str]] = {}
-    for entry in load_training_document_opens_store():
-        if int(entry.get("openedAt", 0) or 0) <= 0:
-            continue
-        document_id = int(entry.get("documentId", 0) or 0)
-        opened_by_document.setdefault(document_id, set()).add(entry["userId"])
-    changed = False
-    for item in items:
-        document_id = int(item.get("id", 0) or 0)
-        count = len(opened_by_document.get(document_id, set()))
-        if int(item.get("downloadCount", 0) or 0) != count:
-            item["downloadCount"] = count
-            changed = True
-    if changed:
-        save_json_list_store(TRAINING_DOCUMENTS_STORE_PATH, items)
-    return items
-
-
-def get_training_video_by_id(item_id: int) -> dict | None:
-    items = refresh_training_video_counts(load_json_list_store(TRAINING_VIDEOS_STORE_PATH))
-    return next((item for item in items if int(item.get("id", 0) or 0) == item_id), None)
-
-
-def get_training_document_by_id(item_id: int) -> dict | None:
-    items = refresh_training_document_counts(load_json_list_store(TRAINING_DOCUMENTS_STORE_PATH))
-    return next((item for item in items if int(item.get("id", 0) or 0) == item_id), None)
-
-
-def reminder_link_for_kind(kind: str, item_id: int) -> str:
-    if kind == "video":
-        return f"/training/video/{item_id}"
-    return f"/training/document/{item_id}"
-
-
-def find_video_by_local_filename(filename: str) -> dict | None:
-    items = load_json_list_store(TRAINING_VIDEOS_STORE_PATH)
-    return next(
-        (
-            item
-            for item in items
-            if str(item.get("storageType", "")).strip() == "Local"
-            and str(item.get("localFilename", "")).strip() == filename
-        ),
-        None,
-    )
-
-
-def find_document_by_local_filename(filename: str) -> dict | None:
-    items = load_json_list_store(TRAINING_DOCUMENTS_STORE_PATH)
-    return next(
-        (
-            item
-            for item in items
-            if str(item.get("storageType", "")).strip() == "Local"
-            and str(item.get("localFilename", "")).strip() == filename
-        ),
-        None,
-    )
-
-
-def is_local_upload_ref(value: object, filename: str) -> bool:
-    return str(value or "").strip() == f"LOCAL:{filename}"
-
-
-def find_announcement_by_local_filename(filename: str) -> dict | None:
-    items = load_json_list_store(ANNOUNCEMENTS_STORE_PATH)
-    return next(
-        (
-            item
-            for item in items
-            if is_local_upload_ref(item.get("imageUrl"), filename)
-            or is_local_upload_ref(item.get("fileUrl"), filename)
-        ),
-        None,
-    )
-
-
 def find_user_by_local_image(filename: str) -> dict | None:
     users = load_user_store()
     return next(
@@ -2629,100 +2554,14 @@ def local_filename_from_ref(value: object) -> str:
     return raw.replace("LOCAL:", "", 1).strip()
 
 
-def cleanup_local_announcement_assets(item: dict) -> None:
-    for key in ("imageUrl", "fileUrl"):
-        filename = local_filename_from_ref(item.get(key))
-        if filename:
-            remove_uploaded_file_if_unused(filename)
-
-
 def remove_uploaded_file_if_unused(filename: str) -> None:
     if not filename:
         return
-    video_match = find_video_by_local_filename(filename)
-    document_match = find_document_by_local_filename(filename)
-    announcement_match = find_announcement_by_local_filename(filename)
-    profile_match = find_user_by_local_image(filename)
-    if video_match or document_match or announcement_match or profile_match:
+    if find_user_by_local_image(filename):
         return
     file_path = os.path.join(UPLOADS_DIR, filename)
     if os.path.isfile(file_path):
         os.remove(file_path)
-
-
-def send_training_reminders(kind: str, item_id: int) -> dict[str, int]:
-    kind_key = "video" if kind == "video" else "document"
-    item = get_training_video_by_id(item_id) if kind_key == "video" else get_training_document_by_id(item_id)
-    if not item or item.get("isArchived"):
-        raise ValueError("Training item not found")
-    eligible = eligible_users_for_item(item)
-    completed_or_opened = (
-        get_video_completed_user_ids(item_id)
-        if kind_key == "video"
-        else get_document_opened_user_ids(item_id)
-    )
-    target_users = [user for user in eligible if user["id"] not in completed_or_opened]
-    if not target_users:
-        return {"notifications": 0, "emails": 0}
-
-    reminders = load_training_reminders_store()
-    cutoff = now_seconds() - TRAINING_REMINDER_COOLDOWN_SECONDS
-    reminders = [entry for entry in reminders if int(entry.get("sentAt", 0) or 0) >= cutoff]
-    recent_pairs = {
-        (entry["kind"], int(entry["itemId"]), entry["userId"])
-        for entry in reminders
-    }
-    pending_users = [
-        user
-        for user in target_users
-        if (kind_key, item_id, user["id"]) not in recent_pairs
-    ]
-    if not pending_users:
-        save_training_reminders_store(reminders)
-        return {"notifications": 0, "emails": 0}
-
-    title = "Mandatory Training Reminder"
-    item_name = str(item.get("title", "")).strip()
-    message = (
-        f'Please complete "{item_name}" in the training portal.'
-        if kind_key == "video"
-        else f'Please open and review "{item_name}" in the training portal.'
-    )
-    link_to = reminder_link_for_kind(kind_key, item_id)
-    notification_count = create_notifications_for_users(
-        pending_users,
-        kind="training",
-        title=title,
-        message=message,
-        link_to=link_to,
-    )
-    email_count = 0
-    for user in pending_users:
-        email = str(user.get("email", "")).strip().lower()
-        if not email:
-            continue
-        try:
-            send_content_notification_email(
-                to_email=email,
-                subject="Bawjiase SUSU Collection Portal - Mandatory Training Reminder",
-                headline=title,
-                intro=message,
-                item_title=item_name,
-                link_to=build_portal_link(link_to),
-            )
-            email_count += 1
-        except Exception:
-            app.logger.exception("Failed sending training reminder email", extra={"email": email})
-        reminders.append(
-            {
-                "kind": kind_key,
-                "itemId": item_id,
-                "userId": user["id"],
-                "sentAt": now_seconds(),
-            }
-        )
-    save_training_reminders_store(reminders)
-    return {"notifications": notification_count, "emails": email_count}
 
 
 def handle_options():
@@ -2731,66 +2570,25 @@ def handle_options():
     return None
 
 
-def upload_public_url(filename: str) -> str:
-    return f"/uploads/{filename}"
-
-
-def save_uploaded_media(file_storage, kind: str) -> dict:
-    if not file_storage or not getattr(file_storage, "filename", ""):
-        raise ValueError("A file is required")
-    original_name = secure_filename(str(file_storage.filename))
-    if not original_name:
-        raise ValueError("Invalid file name")
-    ext = os.path.splitext(original_name)[1].lower()
-    settings = load_portal_settings_store()
-    max_mb_by_kind = {
-        "profile": 5,
-        "announcement": 25,
-        "document": int(settings.get("documentUploadLimitMb") or 100),
-        "video": int(settings.get("videoUploadLimitMb") or 1024),
-    }
-    max_bytes = max_mb_by_kind.get(kind, 25) * 1024 * 1024
-    content_length = int(getattr(file_storage, "content_length", 0) or request.content_length or 0)
-    if content_length and content_length > max_bytes:
-        raise ValueError(f"File is too large. Maximum allowed for {kind} uploads is {max_mb_by_kind.get(kind, 25)} MB.")
-    mimetype = str(getattr(file_storage, "mimetype", "") or "").lower()
-    if kind == "video":
-        allowed = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
-        allowed_mime_prefixes = ("video/",)
-    elif kind == "profile":
-        allowed = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
-        allowed_mime_prefixes = ("image/",)
-    elif kind == "announcement":
-        allowed = {
-            ".jpg",
-            ".jpeg",
-            ".png",
-            ".webp",
-            ".gif",
-            ".pdf",
-            ".doc",
-            ".docx",
-            ".xls",
-            ".xlsx",
-            ".ppt",
-            ".pptx",
-        }
-        allowed_mime_prefixes = ("image/", "application/pdf", "application/msword", "application/vnd.")
-    else:
-        allowed = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx"}
-        allowed_mime_prefixes = ("application/pdf", "application/msword", "application/vnd.")
-    if ext not in allowed:
-        raise ValueError("Unsupported file type")
-    if mimetype and not any(mimetype.startswith(prefix) for prefix in allowed_mime_prefixes):
-        raise ValueError("Uploaded file content type does not match the allowed file type")
-    filename = f"{kind}-{secrets.token_hex(8)}{ext}"
-    target_path = os.path.join(UPLOADS_DIR, filename)
-    file_storage.save(target_path)
-    return {
-        "filename": filename,
-        "url": upload_public_url(filename),
-        "contentType": str(getattr(file_storage, "mimetype", "") or "application/octet-stream"),
-    }
+def send_persisted_upload(filename: str):
+    if pg_enabled():
+        ensure_pg_store_table()
+        with pg_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT content_type, payload FROM portal_uploads WHERE filename = %s", (filename,))
+                row = cur.fetchone()
+        if row:
+            return send_file(
+                io.BytesIO(bytes(row[1])),
+                mimetype=str(row[0] or "application/octet-stream"),
+                download_name=filename,
+                conditional=True,
+                max_age=3600,
+            )
+    local_path = os.path.join(UPLOADS_DIR, filename)
+    if os.path.isfile(local_path):
+        return send_from_directory(UPLOADS_DIR, filename, conditional=True)
+    return jsonify({"error": "File not found"}), 404
 
 
 @app.route("/api/health", methods=["GET"])
@@ -2843,15 +2641,8 @@ def get_uploaded_media(filename: str):
     _, auth_user, error = require_authenticated_user()
     if error:
         return error
-    training_item = find_video_by_local_filename(safe_name) or find_document_by_local_filename(safe_name)
-    if training_item:
-        if not user_can_access_item(auth_user, training_item):
-            return jsonify({"error": "Access denied"}), 403
-        return send_from_directory(UPLOADS_DIR, safe_name, conditional=True)
-    if find_announcement_by_local_filename(safe_name):
-        return send_from_directory(UPLOADS_DIR, safe_name, conditional=True)
     if find_user_by_local_image(safe_name):
-        return send_from_directory(UPLOADS_DIR, safe_name, conditional=True)
+        return send_persisted_upload(safe_name)
     return jsonify({"error": "File not found"}), 404
 
 
@@ -3046,21 +2837,20 @@ def create_audit_log():
     preflight = handle_options()
     if preflight:
         return preflight
-    _, auth_user, error = require_authenticated_user()
+    _, auth_user, error = require_owner_admin()
     if error:
         return error
     data, error = require_json()
     if error:
         return error
-    action = str(data.get("action", "")).strip().upper()
     target = str(data.get("target", "")).strip()
-    if not action or not target:
-        return jsonify({"error": "Action and target are required"}), 400
+    if not target:
+        return jsonify({"error": "A manual audit note is required"}), 400
     entry = record_audit_log(
         auth_user,
-        action,
-        target,
-        str(data.get("ipAddress", "") or request_ip_address()),
+        "MANUAL_AUDIT_NOTE",
+        target[:1000],
+        request_ip_address(),
     )
     return jsonify({"ok": True, "log": entry})
 
@@ -3134,7 +2924,7 @@ def unlock_portal_settings():
     preflight = handle_options()
     if preflight:
         return preflight
-    _, auth_user, error = require_owner_admin()
+    session_token, auth_user, error = require_owner_admin()
     if error:
         return error
     data, error = require_json()
@@ -3148,7 +2938,8 @@ def unlock_portal_settings():
         record_audit_log(auth_user, "PORTAL_CONTROL_UNLOCK_FAILED", {"reason": "invalid_password"})
         return jsonify({"error": "Portal control password is incorrect"}), 403
     record_audit_log(auth_user, "PORTAL_CONTROL_UNLOCKED", {"ok": True})
-    return jsonify({"ok": True})
+    authorization_token, expires_at = issue_portal_authorization(auth_user, session_token)
+    return jsonify({"ok": True, "authorizationToken": authorization_token, "expiresAt": expires_at})
 
 
 @app.route("/api/portal-settings", methods=["POST", "OPTIONS"])
@@ -3156,18 +2947,15 @@ def update_portal_settings():
     preflight = handle_options()
     if preflight:
         return preflight
-    _, auth_user, error = require_owner_admin()
+    session_token, auth_user, error = require_owner_admin()
     if error:
         return error
     data, error = require_json()
     if error:
         return error
-    password = str(data.get("password", "") or "")
-    expected_password = configured_portal_control_password()
-    if not expected_password:
-        return jsonify({"error": "PORTAL_CONTROL_PASSWORD is not configured on the server."}), 500
-    if not portal_control_password_matches(password, expected_password):
-        return jsonify({"error": "Portal control password is incorrect"}), 403
+    authorization_error = portal_authorization_error(data, auth_user, session_token)
+    if authorization_error:
+        return authorization_error
     current_settings = load_portal_settings_store()
     branches = normalize_portal_branches(data.get("branches"))
     departments = normalize_portal_departments(data.get("departments"))
@@ -3216,11 +3004,11 @@ def update_portal_settings():
         "portalControlPassword": "",
         "itAccessCode": str(data.get("itAccessCode") or ""),
         "hrAccessCode": str(data.get("hrAccessCode") or ""),
-        "sessionDays": normalize_positive_number(data.get("sessionDays"), DEFAULT_PORTAL_SETTINGS["sessionDays"]),
+        "sessionMinutes": min(60, normalize_positive_number(data.get("sessionMinutes"), DEFAULT_PORTAL_SETTINGS["sessionMinutes"])),
+        "absoluteSessionHours": min(24, normalize_positive_number(data.get("absoluteSessionHours"), DEFAULT_PORTAL_SETTINGS["absoluteSessionHours"])),
+        "sensitiveReauthMinutes": min(30, normalize_positive_number(data.get("sensitiveReauthMinutes"), DEFAULT_PORTAL_SETTINGS["sensitiveReauthMinutes"])),
         "verificationMinutes": normalize_positive_number(data.get("verificationMinutes"), DEFAULT_PORTAL_SETTINGS["verificationMinutes"]),
         "passwordResetMinutes": normalize_positive_number(data.get("passwordResetMinutes"), DEFAULT_PORTAL_SETTINGS["passwordResetMinutes"]),
-        "videoUploadLimitMb": normalize_positive_number(data.get("videoUploadLimitMb"), DEFAULT_PORTAL_SETTINGS["videoUploadLimitMb"]),
-        "documentUploadLimitMb": normalize_positive_number(data.get("documentUploadLimitMb"), DEFAULT_PORTAL_SETTINGS["documentUploadLimitMb"]),
         "dashboardLabel": str(data.get("dashboardLabel") or DEFAULT_PORTAL_SETTINGS["dashboardLabel"]),
         "trainingLabel": str(data.get("trainingLabel") or DEFAULT_PORTAL_SETTINGS["trainingLabel"]),
         "formsLabel": str(data.get("formsLabel") or DEFAULT_PORTAL_SETTINGS["formsLabel"]),
@@ -3270,16 +3058,15 @@ def normalize_stored_susu_departments():
     preflight = handle_options()
     if preflight:
         return preflight
-    _, auth_user, error = require_owner_admin()
+    session_token, auth_user, error = require_owner_admin()
     if error:
         return error
     data, error = require_json()
     if error:
         return error
-    password = str(data.get("password", "") or "")
-    expected_password = configured_portal_control_password()
-    if not portal_control_password_matches(password, expected_password):
-        return jsonify({"error": "Portal control password is incorrect"}), 403
+    authorization_error = portal_authorization_error(data, auth_user, session_token)
+    if authorization_error:
+        return authorization_error
     backup_error = backup_confirmation_error(auth_user, data.get("backupConfirmed"))
     if backup_error:
         return backup_error
@@ -3385,18 +3172,15 @@ def import_production_backup():
     preflight = handle_options()
     if preflight:
         return preflight
-    _, auth_user, error = require_owner_admin()
+    session_token, auth_user, error = require_owner_admin()
     if error:
         return error
     data, error = require_json()
     if error:
         return error
-    password = str(data.get("password", "") or "")
-    expected_password = configured_portal_control_password()
-    if not expected_password:
-        return jsonify({"error": "PORTAL_CONTROL_PASSWORD is not configured on the server."}), 500
-    if not portal_control_password_matches(password, expected_password):
-        return jsonify({"error": "Portal control password is incorrect"}), 403
+    authorization_error = portal_authorization_error(data, auth_user, session_token)
+    if authorization_error:
+        return authorization_error
     stores = data.get("stores") if isinstance(data.get("stores"), dict) else None
     if not stores:
         return jsonify({"error": "Backup file is missing stores data."}), 400
@@ -3438,7 +3222,9 @@ def import_production_backup():
             if "notifications" in stores:
                 save_json_list_store(NOTIFICATIONS_STORE_PATH, stores.get("notifications") or [])
             if "auditLogs" in stores and isinstance(stores.get("auditLogs"), list):
-                save_audit_logs_store(stores.get("auditLogs") or [])
+                save_audit_logs_store(
+                    merge_audit_logs(current_backup["auditLogs"], stores.get("auditLogs") or [])
+                )
             if "portalSettings" in stores and isinstance(stores.get("portalSettings"), dict):
                 imported_settings = {**DEFAULT_PORTAL_SETTINGS, **stores.get("portalSettings")}
                 imported_settings.pop("portalControlPassword", None)
@@ -3485,12 +3271,12 @@ def clear_test_data():
     data, error = require_json()
     if error:
         return error
-    backup_error = backup_confirmation_error(auth_user, data.get("backupConfirmed"))
-    if backup_error:
-        return backup_error
     settings = load_portal_settings_store()
     if str(settings.get("appMode", "test")).lower() != "test":
         return jsonify({"error": "Switch the portal to Test Mode before clearing test data."}), 400
+    backup_error = backup_confirmation_error(auth_user, data.get("backupConfirmed"))
+    if backup_error:
+        return backup_error
     with DATA_LOCK:
         save_json_list_store(CUSTOMERS_STORE_PATH, [])
         save_json_list_store(COLLECTIONS_STORE_PATH, [])
@@ -3846,6 +3632,63 @@ def update_customer(customer_id: str):
     return jsonify({"ok": True, "customer": customer})
 
 
+def parse_customer_import_file(file_storage) -> list[dict]:
+    if not file_storage or not getattr(file_storage, "filename", ""):
+        raise ValueError("Choose a CSV or XLSX file.")
+    filename = secure_filename(str(file_storage.filename))
+    extension = os.path.splitext(filename)[1].lower()
+    if extension not in {".csv", ".xlsx"}:
+        raise ValueError("Only CSV and XLSX customer files are accepted.")
+    max_bytes = 5 * 1024 * 1024
+    content = file_storage.stream.read(max_bytes + 1)
+    if len(content) > max_bytes:
+        raise ValueError("Customer import files must be 5 MB or smaller.")
+    if not content:
+        raise ValueError("The customer import file is empty.")
+
+    if extension == ".csv":
+        try:
+            decoded = content.decode("utf-8-sig")
+        except UnicodeDecodeError as exc:
+            raise ValueError("CSV files must use UTF-8 encoding.") from exc
+        return [
+            {**dict(row), "_row": index}
+            for index, row in enumerate(csv.DictReader(io.StringIO(decoded)), start=2)
+        ]
+
+    try:
+        workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+        sheet = workbook.active
+        iterator = sheet.iter_rows(values_only=True)
+        header_values = next(iterator, None)
+        if not header_values:
+            raise ValueError("The XLSX worksheet is empty.")
+        headers = [str(value or "").strip() for value in header_values]
+        rows = []
+        for row_number, values in enumerate(iterator, start=2):
+            row = {headers[index]: value for index, value in enumerate(values) if index < len(headers)}
+            if any(str(value or "").strip() for value in row.values()):
+                rows.append({**row, "_row": row_number})
+        workbook.close()
+        return rows
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError("The XLSX file could not be read safely.") from exc
+
+
+def customer_import_value(row: dict, *aliases: str) -> str:
+    normalized = {str(key).strip().lower(): value for key, value in row.items()}
+    for alias in aliases:
+        value = normalized.get(alias.lower())
+        if value is None:
+            continue
+        if isinstance(value, float) and value.is_integer():
+            value = int(value)
+        return str(value).strip()
+    return ""
+
+
 @app.route("/api/customers/import", methods=["POST", "OPTIONS"])
 def import_customers():
     preflight = handle_options()
@@ -3856,10 +3699,18 @@ def import_customers():
         return error
     if not can_manage_agents_and_customers(auth_user):
         return jsonify({"error": "Only supervisors or owner admin can import customers."}), 403
-    data, error = require_json()
-    if error:
-        return error
-    rows = data.get("customers")
+    is_multipart = bool(request.files.get("file"))
+    if is_multipart:
+        data = request.form.to_dict()
+        try:
+            rows = parse_customer_import_file(request.files.get("file"))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+    else:
+        data, error = require_json()
+        if error:
+            return error
+        rows = data.get("customers")
     if not isinstance(rows, list) or not rows:
         return jsonify({"error": "Upload must contain at least one customer row."}), 400
     try:
@@ -3868,30 +3719,47 @@ def import_customers():
         return jsonify({"error": str(exc)}), 403
     customers = load_json_list_store(CUSTOMERS_STORE_PATH)
     existing_numbers = {str(item.get("account_number", "")).strip() for item in customers}
-    created = []
+    valid_rows = []
     skipped = []
     for index, row in enumerate(rows, start=1):
+        row_number = int(row.get("_row", index) or index) if isinstance(row, dict) else index
         if not isinstance(row, dict):
-            skipped.append({"row": index, "reason": "Invalid row"})
+            skipped.append({"row": row_number, "reason": "Invalid row"})
             continue
         try:
             account_name = normalize_required_text(
-                row.get("account_name") or row.get("Account Name") or row.get("name"),
+                customer_import_value(row, "account name", "account_name", "name", "customer name"),
                 "Account name",
             )
             account_number = normalize_account_number(
-                row.get("account_number") or row.get("Account Number") or row.get("account"),
+                customer_import_value(row, "account number", "account_number", "account no", "account no.", "account"),
             )
             branch_name = managed_branch_for_user(
                 auth_user,
-                row.get("branch") or row.get("Branch") or import_branch,
+                customer_import_value(row, "branch", "branch name") or import_branch,
             )
         except ValueError as exc:
-            skipped.append({"row": index, "reason": str(exc)})
+            skipped.append({"row": row_number, "reason": str(exc)})
             continue
         if account_number in existing_numbers:
-            skipped.append({"row": index, "reason": "Duplicate account number"})
+            skipped.append({"row": row_number, "reason": "Duplicate account number"})
             continue
+        valid_rows.append({
+            "rowNumber": row_number,
+            "account_name": account_name,
+            "account_number": account_number,
+            "branch": branch_name,
+        })
+        existing_numbers.add(account_number)
+
+    if str(data.get("preview", "")).strip().lower() in {"1", "true", "yes"}:
+        return jsonify({"ok": True, "validRows": valid_rows, "skipped": skipped})
+
+    created = []
+    for row in valid_rows:
+        account_name = row["account_name"]
+        account_number = row["account_number"]
+        branch_name = row["branch"]
         customer = {
             "id": f"cust-{now_ms()}-{secrets.token_hex(3)}",
             "account_name": account_name,
@@ -3910,7 +3778,6 @@ def import_customers():
             "importedBy": auth_user["fullname"],
         }
         customers.append(customer)
-        existing_numbers.add(account_number)
         created.append(customer)
     if created:
         save_json_list_store(CUSTOMERS_STORE_PATH, customers)
@@ -3952,6 +3819,109 @@ def get_customer_imports():
     ]
     imports.sort(key=lambda item: int(item.get("uploadedAt", 0) or 0), reverse=True)
     return jsonify({"imports": imports})
+
+
+def persist_postgres_deposit(collection: dict, customer: dict) -> tuple[str, dict | None]:
+    ensure_pg_store_table()
+    with pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO susu_deposit_guards (
+                  customer_id, transaction_date, agent_id, idempotency_key, collection_id
+                ) VALUES (%s, %s::date, %s, %s, %s)
+                ON CONFLICT DO NOTHING
+                RETURNING collection_id
+                """,
+                (
+                    collection["customer_id"],
+                    collection["transaction_date"],
+                    collection["agent_id"],
+                    collection.get("idempotency_key") or None,
+                    collection["id"],
+                ),
+            )
+            inserted = cur.fetchone()
+            if not inserted:
+                if collection.get("idempotency_key"):
+                    cur.execute(
+                        """
+                        SELECT collection_id FROM susu_deposit_guards
+                        WHERE agent_id = %s AND idempotency_key = %s
+                        """,
+                        (collection["agent_id"], collection["idempotency_key"]),
+                    )
+                    existing = cur.fetchone()
+                    if existing:
+                        cur.execute("SELECT payload FROM susu_collections WHERE record_id = %s", (existing[0],))
+                        existing_payload = cur.fetchone()
+                        conn.rollback()
+                        return "idempotent", existing_payload[0] if existing_payload else None
+                cur.execute(
+                    """
+                    SELECT collection_id FROM susu_deposit_guards
+                    WHERE customer_id = %s AND transaction_date = %s::date
+                    """,
+                    (collection["customer_id"], collection["transaction_date"]),
+                )
+                existing = cur.fetchone()
+                conn.rollback()
+                return "duplicate", {"id": str(existing[0])} if existing else None
+            cur.execute(
+                """
+                INSERT INTO susu_collections (
+                  record_id, customer_id, transaction_reference, account_number,
+                  amount, agent_id, branch_name, transaction_date,
+                  collection_status, idempotency_key, payload, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::date, %s, %s, %s::jsonb, NOW())
+                ON CONFLICT (record_id) DO NOTHING
+                """,
+                (
+                    collection["id"],
+                    collection["customer_id"],
+                    collection["transaction_reference"],
+                    collection["account_number"],
+                    collection["amount"],
+                    collection["agent_id"],
+                    collection["branch_name"],
+                    collection["transaction_date"],
+                    collection["status"],
+                    collection.get("idempotency_key") or None,
+                    json.dumps(collection, ensure_ascii=True),
+                ),
+            )
+            cur.execute(
+                """
+                INSERT INTO susu_customers (
+                  record_id, account_number, branch_name, customer_status, payload, updated_at
+                ) VALUES (%s, %s, %s, %s, %s::jsonb, NOW())
+                ON CONFLICT (record_id) DO UPDATE SET
+                  account_number = EXCLUDED.account_number,
+                  branch_name = EXCLUDED.branch_name,
+                  customer_status = EXCLUDED.customer_status,
+                  payload = EXCLUDED.payload,
+                  updated_at = NOW()
+                """,
+                (
+                    customer["id"],
+                    customer["account_number"],
+                    str(customer.get("branch_name") or customer.get("branch") or "UNKNOWN").strip().upper(),
+                    str(customer.get("customer_status") or "active").strip().lower(),
+                    json.dumps(customer, ensure_ascii=True),
+                ),
+            )
+        conn.commit()
+    return "created", collection
+
+
+def release_deposit_guard(collection_id: str) -> None:
+    if not pg_enabled() or not collection_id:
+        return
+    ensure_pg_store_table()
+    with pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM susu_deposit_guards WHERE collection_id = %s", (collection_id,))
+        conn.commit()
 
 
 @app.route("/api/collections", methods=["GET"])
@@ -4054,11 +4024,22 @@ def create_collection():
             "recordedByEmail": auth_user["email"],
             "created_date": now_ms(),
         }
-        collections.append(collection)
         customer["total_deposits"] = round(float(customer.get("total_deposits") or 0) + round(amount, 2), 2)
         customer["last_deposit_date"] = collection["transaction_date"]
-        save_json_list_store(COLLECTIONS_STORE_PATH, collections)
-        save_json_list_store(CUSTOMERS_STORE_PATH, customers)
+        if pg_enabled():
+            guard_status, existing = persist_postgres_deposit(collection, customer)
+        else:
+            guard_status, existing = "created", None
+        if guard_status == "idempotent":
+            if existing:
+                return jsonify({"ok": True, "collection": existing, "idempotent": True})
+            return jsonify({"error": "The original deposit is still being saved. Please wait and refresh."}), 409
+        if guard_status == "duplicate":
+            return jsonify({"error": "This customer already has a completed deposit for today."}), 409
+        if not pg_enabled():
+            collections.append(collection)
+            save_json_list_store(COLLECTIONS_STORE_PATH, collections)
+            save_json_list_store(CUSTOMERS_STORE_PATH, customers)
         record_audit_log(auth_user, "CREATE_COLLECTION", {
             "collectionId": collection["id"],
             "amount": collection["amount"],
@@ -4129,6 +4110,7 @@ def review_collection(collection_id: str):
                 completed_for_customer.sort(key=lambda entry: int(entry.get("created_date", 0) or 0), reverse=True)
                 customer["last_deposit_date"] = completed_for_customer[0].get("transaction_date") if completed_for_customer else None
                 save_json_list_store(CUSTOMERS_STORE_PATH, customers)
+            release_deposit_guard(str(item.get("id") or ""))
             reversal_applied = True
         item["supervisor_review_status"] = status
         item["reviewed_by"] = auth_user["fullname"]
@@ -4219,10 +4201,6 @@ def update_profile(user_id: str):
         "branch": user.get("branch"),
     }
     previous_image = str(user.get("imageFile") or "").strip()
-    try:
-        requested_department = normalize_portal_department_name(data.get("department", user["department"]))
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
     if "fullname" in data:
         try:
             user["fullname"] = normalize_required_text(data.get("fullname"), "Full name")
@@ -4235,17 +4213,7 @@ def update_profile(user_id: str):
             return jsonify({"error": str(exc)}), 400
     if "position" in data:
         user["position"] = str(data.get("position", "")).strip() or user["position"]
-    if "department" in data and can_manage_org_fields and requested_department:
-        user["department"] = requested_department
-        if user.get("role") != "Supervisor":
-            user["role"] = role_from_department(requested_department)
-        user["permissions"] = normalize_user_permissions(user.get("permissions"), user["role"])
-        user["managedBranches"] = normalize_scope_list(
-            user.get("managedBranches"),
-            empty_default=["ALL"] if user["role"] in GLOBAL_MANAGER_ROLES else [],
-        )
-        if user["role"] != "Supervisor":
-            user["managedDepartmentsByBranch"] = {}
+    user["department"] = "SUSU"
     if "branch" in data and can_manage_org_fields:
         try:
             user["branch"] = normalize_portal_branch_name(data.get("branch"))
@@ -4770,17 +4738,17 @@ def auth_register():
             return jsonify({"error": "Public staff sign-up is currently disabled. Ask a supervisor or owner admin to add your account."}), 403
         email = validate_email(str(data.get("email", "")))
         password = str(data.get("passwordHash", ""))
-        requested_department = str(data.get("department", "")).strip().upper()
+        requested_department = str(data.get("department", "") or "").strip().upper()
         if requested_department in {"SUSU AGENT", "SUSU SUPERVISOR"}:
             return jsonify({"error": "SUSU agent and supervisor accounts must be created by a supervisor or owner admin."}), 403
-        department = normalize_portal_department_name(data.get("department"))
+        department = "SUSU"
         branch = normalize_portal_branch_name(data.get("branch"))
         if not password:
             return jsonify({"error": "Password is required"}), 400
         if len(password) < 8:
             return jsonify({"error": "Password must be at least 8 characters"}), 400
-        if not department or not branch:
-            return jsonify({"error": "Department and branch are required"}), 400
+        if not branch:
+            return jsonify({"error": "Branch is required"}), 400
         users = load_user_store()
         existing = find_user_by_email(users, email)
         if existing and existing["isVerified"]:
@@ -4953,14 +4921,64 @@ def auth_login():
             passwords[email] = hash_password_for_storage(password)
             save_password_store(passwords)
 
+        if privileged_mfa_required(user):
+            clear_auth_failures(limit_key)
+            try:
+                challenge = issue_privileged_mfa_challenge(user)
+            except Exception as exc:
+                app.logger.error("Privileged MFA delivery failed for %s: %s", email, exc)
+                record_audit_log(user, "PRIVILEGED_MFA_DELIVERY_FAILED", {"email": email})
+                return jsonify({"error": "Verification code could not be delivered. Contact the system owner."}), 503
+            record_audit_log(user, "PRIVILEGED_MFA_REQUIRED", {"email": email})
+            return jsonify({"ok": True, "requiresMfa": True, **challenge})
+
         user["lastSeen"] = now_ms()
         save_user_store(users)
         session_token = issue_session(user["id"])
         clear_auth_failures(limit_key)
         record_audit_log(user, "LOGIN", staff_audit_target(user))
-        return jsonify({"ok": True, "user": user, "sessionToken": session_token})
+        return authenticated_response(user, session_token)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/api/auth/privileged-mfa/verify", methods=["POST", "OPTIONS"])
+def auth_privileged_mfa_verify():
+    preflight = handle_options()
+    if preflight:
+        return preflight
+    data, error = require_json()
+    if error:
+        return error
+    challenge_id = str(data.get("challengeId", "") or "").strip()
+    code = "".join(ch for ch in str(data.get("code", "") or "") if ch.isdigit())
+    limit_key = rate_limit_key("privileged-mfa", challenge_id)
+    if auth_rate_limited(limit_key):
+        return jsonify({"error": "Too many verification attempts. Sign in again to request a new code."}), 429
+    challenges = load_privileged_mfa_challenges()
+    challenge = challenges.get(challenge_id)
+    if not challenge or len(code) != 6 or not hmac.compare_digest(
+        str(challenge.get("codeHash", "")), privileged_mfa_code_hash(challenge_id, code)
+    ):
+        record_auth_failure(limit_key)
+        if challenge:
+            challenge["attempts"] = int(challenge.get("attempts", 0) or 0) + 1
+            challenges[challenge_id] = challenge
+            atomic_write_json(PRIVILEGED_MFA_PATH, challenges)
+        record_audit_log(None, "PRIVILEGED_MFA_FAILED", {"challengeId": challenge_id})
+        return jsonify({"error": "Invalid or expired verification code."}), 400
+    users = load_user_store()
+    user = find_user_by_id(users, challenge["userId"])
+    if not user or not privileged_mfa_required(user) or user["isArchived"] or not user["isActive"] or not user["isVerified"]:
+        return jsonify({"error": "This privileged account is not available."}), 403
+    challenges.pop(challenge_id, None)
+    atomic_write_json(PRIVILEGED_MFA_PATH, challenges)
+    clear_auth_failures(limit_key)
+    user["lastSeen"] = now_ms()
+    save_user_store(users)
+    session_token = issue_session(user["id"])
+    record_audit_log(user, "LOGIN_MFA_VERIFIED", staff_audit_target(user))
+    return authenticated_response(user, session_token)
 
 
 @app.route("/api/auth/agent-login", methods=["POST", "OPTIONS"])
@@ -5003,7 +5021,7 @@ def auth_agent_login():
         session_token = issue_session(user["id"])
         clear_auth_failures(limit_key)
         record_audit_log(user, "AGENT_LOGIN", staff_audit_target(user, {"username": username}))
-        return jsonify({"ok": True, "user": user, "sessionToken": session_token})
+        return authenticated_response(user, session_token)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
@@ -5109,7 +5127,7 @@ def auth_agent_complete_setup():
             "AGENT_SETUP_COMPLETED",
             staff_audit_target(user, {"temporaryUsername": username, "permanentUsername": new_username}),
         )
-        return jsonify({"ok": True, "user": user, "sessionToken": session_token})
+        return authenticated_response(user, session_token)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
@@ -5142,6 +5160,43 @@ def auth_agent_verify_token():
         return jsonify({"error": str(exc)}), 400
 
 
+@app.route("/api/auth/reauthenticate", methods=["POST", "OPTIONS"])
+def auth_reauthenticate():
+    preflight = handle_options()
+    if preflight:
+        return preflight
+    session_token, auth_user, error = require_authenticated_user()
+    if error:
+        return error
+    data, error = require_json()
+    if error:
+        return error
+    password = str(data.get("password", "") or "")
+    if not password:
+        return jsonify({"error": "Password is required"}), 400
+    passwords = load_password_store()
+    email = str(auth_user.get("email", "") or "").strip().lower()
+    username = str(auth_user.get("loginUsername", "") or "").strip().lower()
+    stored_password = passwords.get(email)
+    if username:
+        stored_password = passwords.get(agent_password_key(username)) or stored_password
+    if not stored_password or not verify_password(stored_password, password):
+        record_audit_log(auth_user, "SENSITIVE_REAUTH_FAILED", {"userId": auth_user["id"]})
+        return jsonify({"error": "Password is incorrect"}), 401
+    sessions = load_sessions()
+    session_key = session_token_hash(session_token)
+    session = sessions.get(session_key) or sessions.get(session_token)
+    if not session:
+        return jsonify({"error": "Invalid or expired session"}), 401
+    session["recentAuthAt"] = now_seconds()
+    session["lastActivityAt"] = now_seconds()
+    sessions[session_key] = session
+    sessions.pop(session_token, None)
+    save_sessions(sessions)
+    record_audit_log(auth_user, "SENSITIVE_REAUTH_SUCCESS", {"userId": auth_user["id"]})
+    return jsonify({"ok": True})
+
+
 @app.route("/api/auth/logout", methods=["POST", "OPTIONS"])
 def auth_logout():
     preflight = handle_options()
@@ -5156,7 +5211,18 @@ def auth_logout():
     save_presence_store(store)
     revoke_session(token)
     record_audit_log(auth_user, "LOGOUT", staff_audit_target(auth_user))
-    return jsonify({"ok": True})
+    return clear_session_cookie(jsonify({"ok": True}))
+
+
+@app.route("/api/auth/me", methods=["POST", "OPTIONS"])
+def auth_me():
+    preflight = handle_options()
+    if preflight:
+        return preflight
+    _, auth_user, error = require_authenticated_user()
+    if error:
+        return error
+    return jsonify({"ok": True, "user": auth_user})
 
 
 @app.route("/api/auth/request-password-reset", methods=["POST", "OPTIONS"])
@@ -5237,968 +5303,7 @@ def auth_password_reset():
     return jsonify({"ok": True})
 
 
-@app.route("/api/content/announcements", methods=["GET"])
-def get_shared_announcements():
-    _, auth_user, error = require_authenticated_user()
-    if error:
-        return error
-    return jsonify({"announcements": filter_items_for_user(load_json_list_store(ANNOUNCEMENTS_STORE_PATH), auth_user)})
-
-
-@app.route("/api/content/announcements", methods=["POST", "OPTIONS"])
-def create_shared_announcement():
-    preflight = handle_options()
-    if preflight:
-        return preflight
-    _, actor, error = require_module_manager("announcements")
-    if error:
-        return error
-    data, error = require_json()
-    if error:
-        return error
-    items = load_json_list_store(ANNOUNCEMENTS_STORE_PATH)
-    try:
-        payload = normalize_announcement_payload(data, actor)
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-    allowed, denial = ensure_content_management_access(
-        actor,
-        permission_key="announcements",
-        branch_scope=item_branch_scope(payload),
-        department_scope=item_department_scope(payload),
-    )
-    if not allowed:
-        return denial
-    announcement = {
-        "id": next_content_id(items),
-        **payload,
-        "authorId": actor["id"],
-        "authorName": actor["fullname"],
-        "createdAt": now_ms(),
-        "updatedAt": now_ms(),
-        "isDismissed": False,
-        "isTrashed": False,
-    }
-    items.insert(0, announcement)
-    save_json_list_store(ANNOUNCEMENTS_STORE_PATH, items)
-    record_content_audit(actor, "CREATE_ANNOUNCEMENT", "announcement", announcement)
-    return jsonify({"ok": True, "announcement": announcement})
-
-
-@app.route("/api/content/announcements/<int:item_id>/update", methods=["POST", "OPTIONS"])
-def update_shared_announcement(item_id: int):
-    preflight = handle_options()
-    if preflight:
-        return preflight
-    _, actor, error = require_module_manager("announcements")
-    if error:
-        return error
-    data, error = require_json()
-    if error:
-        return error
-    items = load_json_list_store(ANNOUNCEMENTS_STORE_PATH)
-    announcement = next((item for item in items if int(item.get("id", 0) or 0) == item_id), None)
-    if not announcement:
-        return jsonify({"error": "Announcement not found"}), 404
-    if not user_can_manage_item(actor, announcement, "announcements"):
-        return scoped_access_denial(actor)
-    try:
-        payload = normalize_announcement_payload(data, actor, announcement)
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-    allowed, denial = ensure_content_management_access(
-        actor,
-        permission_key="announcements",
-        branch_scope=item_branch_scope(payload),
-        department_scope=item_department_scope(payload),
-    )
-    if not allowed:
-        return denial
-    previous_image = str(announcement.get("imageUrl") or "").strip()
-    previous_file = str(announcement.get("fileUrl") or "").strip()
-    announcement.update(payload)
-    announcement["updatedAt"] = now_ms()
-    save_json_list_store(ANNOUNCEMENTS_STORE_PATH, items)
-    record_content_audit(actor, "UPDATE_ANNOUNCEMENT", "announcement", announcement)
-    if previous_image.startswith("LOCAL:") and previous_image != str(announcement.get("imageUrl") or "").strip():
-        remove_uploaded_file_if_unused(previous_image.replace("LOCAL:", "", 1).strip())
-    if previous_file.startswith("LOCAL:") and previous_file != str(announcement.get("fileUrl") or "").strip():
-        remove_uploaded_file_if_unused(previous_file.replace("LOCAL:", "", 1).strip())
-    return jsonify({"ok": True, "announcement": announcement})
-
-
-@app.route("/api/content/announcements/<int:item_id>/trash", methods=["POST", "OPTIONS"])
-def trash_shared_announcement(item_id: int):
-    preflight = handle_options()
-    if preflight:
-        return preflight
-    _, actor, error = require_module_manager("announcements")
-    if error:
-        return error
-    items = load_json_list_store(ANNOUNCEMENTS_STORE_PATH)
-    announcement = next((item for item in items if int(item.get("id", 0) or 0) == item_id), None)
-    if not announcement:
-        return jsonify({"error": "Announcement not found"}), 404
-    if not user_can_manage_item(actor, announcement, "announcements"):
-        return scoped_access_denial(actor)
-    announcement["isTrashed"] = True
-    announcement["updatedAt"] = now_ms()
-    save_json_list_store(ANNOUNCEMENTS_STORE_PATH, items)
-    record_content_audit(actor, "TRASH_ANNOUNCEMENT", "announcement", announcement)
-    return jsonify({"ok": True})
-
-
-@app.route("/api/content/announcements/<int:item_id>/restore", methods=["POST", "OPTIONS"])
-def restore_shared_announcement(item_id: int):
-    preflight = handle_options()
-    if preflight:
-        return preflight
-    _, actor, error = require_module_manager("announcements")
-    if error:
-        return error
-    items = load_json_list_store(ANNOUNCEMENTS_STORE_PATH)
-    announcement = next((item for item in items if int(item.get("id", 0) or 0) == item_id), None)
-    if not announcement:
-        return jsonify({"error": "Announcement not found"}), 404
-    if not user_can_manage_item(actor, announcement, "announcements"):
-        return scoped_access_denial(actor)
-    announcement["isTrashed"] = False
-    announcement["updatedAt"] = now_ms()
-    save_json_list_store(ANNOUNCEMENTS_STORE_PATH, items)
-    record_content_audit(actor, "RESTORE_ANNOUNCEMENT", "announcement", announcement)
-    return jsonify({"ok": True})
-
-
-@app.route("/api/content/announcements/<int:item_id>/delete", methods=["POST", "OPTIONS"])
-def delete_shared_announcement(item_id: int):
-    preflight = handle_options()
-    if preflight:
-        return preflight
-    _, actor, error = require_module_manager("announcements")
-    if error:
-        return error
-    items = load_json_list_store(ANNOUNCEMENTS_STORE_PATH)
-    target = next((item for item in items if int(item.get("id", 0) or 0) == item_id), None)
-    if not target:
-        return jsonify({"error": "Announcement not found"}), 404
-    if not user_can_manage_item(actor, target, "announcements"):
-        return scoped_access_denial(actor)
-    filtered = [item for item in items if int(item.get("id", 0) or 0) != item_id]
-    save_json_list_store(ANNOUNCEMENTS_STORE_PATH, filtered)
-    record_content_audit(actor, "DELETE_ANNOUNCEMENT", "announcement", target)
-    cleanup_local_announcement_assets(target)
-    return jsonify({"ok": True})
-
-
-@app.route("/api/content/announcements/empty-trash", methods=["POST", "OPTIONS"])
-def empty_shared_announcement_trash():
-    preflight = handle_options()
-    if preflight:
-        return preflight
-    _, actor, error = require_staff_manager()
-    if error:
-        return error
-    items = load_json_list_store(ANNOUNCEMENTS_STORE_PATH)
-    trashed_items = [item for item in items if bool(item.get("isTrashed", False))]
-    save_json_list_store(
-        ANNOUNCEMENTS_STORE_PATH,
-        [item for item in items if not bool(item.get("isTrashed", False))],
-    )
-    for item in trashed_items:
-        cleanup_local_announcement_assets(item)
-    record_audit_log(
-        actor,
-        "EMPTY_ANNOUNCEMENT_TRASH",
-        {"module": "announcement", "deletedCount": len(trashed_items)},
-    )
-    return jsonify({"ok": True})
-
-
-@app.route("/api/content/forms", methods=["GET"])
-def get_shared_forms():
-    _, auth_user, error = require_authenticated_user()
-    if error:
-        return error
-    return jsonify({"forms": filter_items_for_user(load_json_list_store(FORMS_STORE_PATH), auth_user)})
-
-
-@app.route("/api/uploads/training-video", methods=["POST", "OPTIONS"])
-def upload_training_video_file():
-    preflight = handle_options()
-    if preflight:
-        return preflight
-    _, _, error = require_module_manager("trainingVideos")
-    if error:
-        return error
-    try:
-        saved = save_uploaded_media(request.files.get("file"), "video")
-        return jsonify({"ok": True, **saved})
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-
-
-@app.route("/api/uploads/training-document", methods=["POST", "OPTIONS"])
-def upload_training_document_file():
-    preflight = handle_options()
-    if preflight:
-        return preflight
-    _, _, error = require_module_manager("trainingDocuments")
-    if error:
-        return error
-    try:
-        saved = save_uploaded_media(request.files.get("file"), "document")
-        return jsonify({"ok": True, **saved})
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-
-
-@app.route("/api/uploads/announcement-asset", methods=["POST", "OPTIONS"])
-def upload_announcement_asset_file():
-    preflight = handle_options()
-    if preflight:
-        return preflight
-    _, _, error = require_module_manager("announcements")
-    if error:
-        return error
-    try:
-        saved = save_uploaded_media(request.files.get("file"), "announcement")
-        return jsonify({"ok": True, **saved})
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-
-
-@app.route("/api/uploads/profile-photo", methods=["POST", "OPTIONS"])
-def upload_profile_photo_file():
-    preflight = handle_options()
-    if preflight:
-        return preflight
-    _, _, error = require_authenticated_user()
-    if error:
-        return error
-    try:
-        saved = save_uploaded_media(request.files.get("file"), "profile")
-        return jsonify({"ok": True, **saved})
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-
-
-@app.route("/api/content/forms", methods=["POST", "OPTIONS"])
-def create_shared_form():
-    preflight = handle_options()
-    if preflight:
-        return preflight
-    _, actor, error = require_module_manager("forms")
-    if error:
-        return error
-    data, error = require_json()
-    if error:
-        return error
-    send_external_emails = bool(data.get("sendExternalEmails", False))
-    items = load_json_list_store(FORMS_STORE_PATH)
-    try:
-        visibility, department = normalize_visibility_and_department(data)
-        branch_scope, department_scope = derive_content_scope(
-            data,
-            visibility=visibility,
-            department=department,
-        )
-        form = {
-            "id": next_content_id(items),
-            "title": normalize_non_empty_title(data.get("title"), "Form title"),
-            "description": str(data.get("description", "")).strip(),
-            "fileUrl": normalize_form_file_url(data.get("fileUrl")),
-            "category": str(data.get("category", "")).strip() or actor["department"],
-            "visibleTo": [],
-            "visibility": visibility,
-            "department": department,
-            "branchScope": branch_scope,
-            "departmentScope": department_scope,
-            "createdAt": now_ms(),
-            "updatedAt": now_ms(),
-        }
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-    allowed, denial = ensure_content_management_access(
-        actor,
-        permission_key="forms",
-        branch_scope=branch_scope,
-        department_scope=department_scope,
-    )
-    if not allowed:
-        return denial
-    items.insert(0, form)
-    save_json_list_store(FORMS_STORE_PATH, items)
-    record_content_audit(actor, "CREATE_FORM", "form", form)
-    delivery = fanout_content_notification(
-        kind="system",
-        title="New Form Available",
-        message=f"{form['title']} has been added to the forms centre.",
-        email_subject="Bawjiase SUSU Collection Portal - New Form Available",
-        email_headline="New Form Available",
-        email_intro="A new form has been added to the Bawjiase SUSU Collection Portal for eligible staff.",
-        item_title=form["title"],
-        visibility=form["visibility"],
-        department=form.get("department"),
-        branch_scope=form.get("branchScope"),
-        department_scope=form.get("departmentScope"),
-        link_to="/forms",
-        send_external_emails=send_external_emails,
-    )
-    return jsonify({"ok": True, "form": form, "delivery": delivery})
-
-
-@app.route("/api/content/forms/<int:item_id>/update", methods=["POST", "OPTIONS"])
-def update_shared_form(item_id: int):
-    preflight = handle_options()
-    if preflight:
-        return preflight
-    _, actor, error = require_module_manager("forms")
-    if error:
-        return error
-    data, error = require_json()
-    if error:
-        return error
-    items = load_json_list_store(FORMS_STORE_PATH)
-    form = next((item for item in items if int(item.get("id", 0) or 0) == item_id), None)
-    if not form:
-        return jsonify({"error": "Form not found"}), 404
-    if not user_can_manage_item(actor, form, "forms"):
-        return scoped_access_denial(actor)
-    try:
-        if "title" in data:
-            form["title"] = normalize_non_empty_title(data.get("title"), "Form title")
-        if "description" in data:
-            form["description"] = str(data.get("description", "")).strip()
-        if "fileUrl" in data:
-            form["fileUrl"] = normalize_form_file_url(data.get("fileUrl"))
-        if "category" in data:
-            form["category"] = str(data.get("category", "")).strip() or form["category"]
-        if (
-            "visibility" in data
-            or "department" in data
-            or "branchScope" in data
-            or "departmentScope" in data
-        ):
-            merged = {
-                "visibility": data.get("visibility", form.get("visibility")),
-                "department": data.get("department", form.get("department")),
-                "branchScope": data.get("branchScope", form.get("branchScope")),
-                "departmentScope": data.get("departmentScope", form.get("departmentScope")),
-            }
-            visibility, department = normalize_visibility_and_department(merged)
-            branch_scope, department_scope = derive_content_scope(
-                merged,
-                visibility=visibility,
-                department=department,
-                existing=form,
-            )
-            form["visibility"] = visibility
-            form["department"] = department
-            form["branchScope"] = branch_scope
-            form["departmentScope"] = department_scope
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-    allowed, denial = ensure_content_management_access(
-        actor,
-        permission_key="forms",
-        branch_scope=item_branch_scope(form),
-        department_scope=item_department_scope(form),
-    )
-    if not allowed:
-        return denial
-    form["updatedAt"] = now_ms()
-    save_json_list_store(FORMS_STORE_PATH, items)
-    record_content_audit(actor, "UPDATE_FORM", "form", form)
-    return jsonify({"ok": True, "form": form})
-
-
-@app.route("/api/content/forms/<int:item_id>/delete", methods=["POST", "OPTIONS"])
-def delete_shared_form(item_id: int):
-    preflight = handle_options()
-    if preflight:
-        return preflight
-    _, actor, error = require_module_manager("forms")
-    if error:
-        return error
-    items = load_json_list_store(FORMS_STORE_PATH)
-    target = next((item for item in items if int(item.get("id", 0) or 0) == item_id), None)
-    if not target:
-        return jsonify({"error": "Form not found"}), 404
-    if not user_can_manage_item(actor, target, "forms"):
-        return scoped_access_denial(actor)
-    filtered = [item for item in items if int(item.get("id", 0) or 0) != item_id]
-    save_json_list_store(FORMS_STORE_PATH, filtered)
-    record_content_audit(actor, "DELETE_FORM", "form", target)
-    return jsonify({"ok": True})
-
-
-@app.route("/api/content/training/videos", methods=["GET"])
-def get_shared_training_videos():
-    _, auth_user, error = require_authenticated_user()
-    if error:
-        return error
-    items = refresh_training_video_counts(load_json_list_store(TRAINING_VIDEOS_STORE_PATH))
-    return jsonify({"videos": filter_items_for_user(items, auth_user)})
-
-
-@app.route("/api/content/training/videos", methods=["POST", "OPTIONS"])
-def create_shared_training_video():
-    preflight = handle_options()
-    if preflight:
-        return preflight
-    _, actor, error = require_module_manager("trainingVideos")
-    if error:
-        return error
-    data, error = require_json()
-    if error:
-        return error
-    send_external_emails = bool(data.get("sendExternalEmails", False))
-    items = load_json_list_store(TRAINING_VIDEOS_STORE_PATH)
-    try:
-        video = normalize_training_video_payload(data, actor)
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-    allowed, denial = ensure_content_management_access(
-        actor,
-        permission_key="trainingVideos",
-        branch_scope=item_branch_scope(video),
-        department_scope=item_department_scope(video),
-    )
-    if not allowed:
-        return denial
-    items.insert(0, video)
-    save_json_list_store(TRAINING_VIDEOS_STORE_PATH, items)
-    record_content_audit(actor, "CREATE_TRAINING_VIDEO", "trainingVideo", video)
-    video_subject = (
-        "Bawjiase SUSU Collection Portal - Mandatory Training Assigned"
-        if video["isMandatory"]
-        else "Bawjiase SUSU Collection Portal - New Training Video"
-    )
-    video_title = (
-        "Mandatory Training Assigned"
-        if video["isMandatory"]
-        else "New Training Video"
-    )
-    video_intro = (
-        "A mandatory training video has been assigned to eligible staff."
-        if video["isMandatory"]
-        else "A new training video has been uploaded for eligible staff."
-    )
-    delivery = fanout_content_notification(
-        kind="training",
-        title=video_title,
-        message=f"{video['title']} is now available in the training portal.",
-        email_subject=video_subject,
-        email_headline=video_title,
-        email_intro=video_intro,
-        item_title=video["title"],
-        visibility=video["visibility"],
-        department=video.get("department"),
-        branch_scope=video.get("branchScope"),
-        department_scope=video.get("departmentScope"),
-        link_to="/training",
-        send_external_emails=send_external_emails,
-    )
-    return jsonify({"ok": True, "video": video, "delivery": delivery})
-
-
-@app.route("/api/content/training/videos/<int:item_id>/progress", methods=["GET"])
-def get_my_training_video_progress(item_id: int):
-    _, auth_user, error = require_authenticated_user()
-    if error:
-        return error
-    video = get_training_video_by_id(item_id)
-    if not video or bool(video.get("isArchived", False)):
-        return jsonify({"error": "Video not found"}), 404
-    if not user_can_access_item(auth_user, video):
-        return jsonify({"error": "Access denied"}), 403
-    progress_items = load_training_video_progress_store()
-    item = next(
-        (
-            entry
-            for entry in progress_items
-            if entry["userId"] == auth_user["id"] and int(entry["videoId"]) == item_id
-        ),
-        None,
-    )
-    return jsonify({"progress": serialize_video_progress(item or {"videoId": item_id}) if item else None})
-
-
-@app.route("/api/content/training/videos/<int:item_id>/progress", methods=["POST", "OPTIONS"])
-def update_my_training_video_progress(item_id: int):
-    preflight = handle_options()
-    if preflight:
-        return preflight
-    _, auth_user, error = require_authenticated_user()
-    if error:
-        return error
-    data, error = require_json()
-    if error:
-        return error
-    video = get_training_video_by_id(item_id)
-    if not video or bool(video.get("isArchived", False)):
-        return jsonify({"error": "Video not found"}), 404
-    if not user_can_access_item(auth_user, video):
-        return jsonify({"error": "Access denied"}), 403
-    progress_percent = max(0, min(100, int(data.get("progressPercent", 0) or 0)))
-    progress_items = load_training_video_progress_store()
-    entry = next(
-        (
-            item
-            for item in progress_items
-            if item["userId"] == auth_user["id"] and int(item["videoId"]) == item_id
-        ),
-        None,
-    )
-    payload = {
-        "userId": auth_user["id"],
-        "videoId": item_id,
-        "progressPercent": progress_percent,
-        "isComplete": progress_percent >= 98,
-        "lastWatched": now_ms(),
-    }
-    previous_percent = int(entry.get("progressPercent", 0) or 0) if entry else 0
-    is_local_video = str(video.get("storageType", "")).strip() == "Local"
-    if is_local_video:
-        if progress_percent < previous_percent:
-            progress_percent = previous_percent
-        elif progress_percent > previous_percent + 20:
-            return jsonify({"error": "Invalid progress update"}), 400
-        if progress_percent >= 98 and previous_percent < 80:
-            return jsonify({"error": "Progress jumped too far ahead"}), 400
-        payload["progressPercent"] = progress_percent
-        payload["isComplete"] = progress_percent >= 98
-    if entry:
-        entry.update(payload)
-    else:
-        progress_items.append(payload)
-    save_training_video_progress_store(progress_items)
-    refresh_training_video_counts(load_json_list_store(TRAINING_VIDEOS_STORE_PATH))
-    return jsonify({"ok": True, "progress": serialize_video_progress(payload)})
-
-
-@app.route("/api/content/training/videos/stats", methods=["GET"])
-def get_training_video_stats():
-    _, auth_user, error = require_module_manager("trainingVideos")
-    if error:
-        return error
-    items = refresh_training_video_counts(load_json_list_store(TRAINING_VIDEOS_STORE_PATH))
-    progress_items = load_training_video_progress_store()
-    stats = []
-    for video in items:
-        if bool(video.get("isArchived", False)):
-            continue
-        if not user_can_manage_item(auth_user, video, "trainingVideos"):
-            continue
-        video_id = int(video.get("id", 0) or 0)
-        watched_count = len(
-            {
-                entry["userId"]
-                for entry in progress_items
-                if int(entry["videoId"]) == video_id and int(entry["progressPercent"]) > 0
-            }
-        )
-        completed_count = len(
-            {
-                entry["userId"]
-                for entry in progress_items
-                if int(entry["videoId"]) == video_id and bool(entry["isComplete"])
-            }
-        )
-        stats.append(
-            {
-                "videoId": video_id,
-                "title": str(video.get("title", "")),
-                "totalWatched": watched_count,
-                "completedCount": completed_count,
-            }
-        )
-    return jsonify({"stats": stats})
-
-
-@app.route("/api/content/training/videos/<int:item_id>/archive", methods=["POST", "OPTIONS"])
-def archive_shared_training_video(item_id: int):
-    preflight = handle_options()
-    if preflight:
-        return preflight
-    _, actor, error = require_module_manager("trainingVideos")
-    if error:
-        return error
-    items = load_json_list_store(TRAINING_VIDEOS_STORE_PATH)
-    video = next((item for item in items if int(item.get("id", 0) or 0) == item_id), None)
-    if not video:
-        return jsonify({"error": "Video not found"}), 404
-    if not user_can_manage_item(actor, video, "trainingVideos"):
-        return scoped_access_denial(actor)
-    video["isArchived"] = True
-    save_json_list_store(TRAINING_VIDEOS_STORE_PATH, items)
-    record_content_audit(actor, "ARCHIVE_TRAINING_VIDEO", "trainingVideo", video)
-    return jsonify({"ok": True})
-
-
-@app.route("/api/content/training/videos/<int:item_id>/delete", methods=["POST", "OPTIONS"])
-def delete_shared_training_video(item_id: int):
-    preflight = handle_options()
-    if preflight:
-        return preflight
-    _, actor, error = require_module_manager("trainingVideos")
-    if error:
-        return error
-    items = load_json_list_store(TRAINING_VIDEOS_STORE_PATH)
-    target = next((item for item in items if int(item.get("id", 0) or 0) == item_id), None)
-    if not target:
-        return jsonify({"error": "Video not found"}), 404
-    if not user_can_manage_item(actor, target, "trainingVideos"):
-        return scoped_access_denial(actor)
-    filtered = [item for item in items if int(item.get("id", 0) or 0) != item_id]
-    save_json_list_store(TRAINING_VIDEOS_STORE_PATH, filtered)
-    record_content_audit(actor, "DELETE_TRAINING_VIDEO", "trainingVideo", target)
-    if target and str(target.get("storageType", "")).strip() == "Local":
-        remove_uploaded_file_if_unused(str(target.get("localFilename", "")).strip())
-    return jsonify({"ok": True})
-
-
-@app.route("/api/content/training/documents", methods=["GET"])
-def get_shared_training_documents():
-    _, auth_user, error = require_authenticated_user()
-    if error:
-        return error
-    items = refresh_training_document_counts(load_json_list_store(TRAINING_DOCUMENTS_STORE_PATH))
-    return jsonify({"documents": filter_items_for_user(items, auth_user)})
-
-
-@app.route("/api/content/training/documents", methods=["POST", "OPTIONS"])
-def create_shared_training_document():
-    preflight = handle_options()
-    if preflight:
-        return preflight
-    _, actor, error = require_module_manager("trainingDocuments")
-    if error:
-        return error
-    data, error = require_json()
-    if error:
-        return error
-    send_external_emails = bool(data.get("sendExternalEmails", False))
-    items = load_json_list_store(TRAINING_DOCUMENTS_STORE_PATH)
-    try:
-        document = normalize_training_document_payload(data, actor)
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-    allowed, denial = ensure_content_management_access(
-        actor,
-        permission_key="trainingDocuments",
-        branch_scope=item_branch_scope(document),
-        department_scope=item_department_scope(document),
-    )
-    if not allowed:
-        return denial
-    items.insert(0, document)
-    save_json_list_store(TRAINING_DOCUMENTS_STORE_PATH, items)
-    record_content_audit(actor, "CREATE_TRAINING_DOCUMENT", "trainingDocument", document)
-    document_subject = (
-        "Bawjiase SUSU Collection Portal - Mandatory Training Document"
-        if document["isMandatory"]
-        else "Bawjiase SUSU Collection Portal - New Training Document"
-    )
-    document_title = (
-        "Mandatory Training Document"
-        if document["isMandatory"]
-        else "New Training Document"
-    )
-    document_intro = (
-        "A mandatory training document has been shared with eligible staff."
-        if document["isMandatory"]
-        else "A new training document has been uploaded for eligible staff."
-    )
-    delivery = fanout_content_notification(
-        kind="training",
-        title=document_title,
-        message=f"{document['title']} is now available in the training portal.",
-        email_subject=document_subject,
-        email_headline=document_title,
-        email_intro=document_intro,
-        item_title=document["title"],
-        visibility=document["visibility"],
-        department=document.get("department"),
-        branch_scope=document.get("branchScope"),
-        department_scope=document.get("departmentScope"),
-        link_to="/training",
-        send_external_emails=send_external_emails,
-    )
-    return jsonify({"ok": True, "document": document, "delivery": delivery})
-
-
-@app.route("/api/content/training/documents/<int:item_id>/open-state", methods=["GET"])
-def get_my_training_document_open_state(item_id: int):
-    _, auth_user, error = require_authenticated_user()
-    if error:
-        return error
-    document = get_training_document_by_id(item_id)
-    if not document or bool(document.get("isArchived", False)):
-        return jsonify({"error": "Document not found"}), 404
-    if not user_can_access_item(auth_user, document):
-        return jsonify({"error": "Access denied"}), 403
-    open_items = load_training_document_opens_store()
-    item = next(
-        (
-            entry
-            for entry in open_items
-            if entry["userId"] == auth_user["id"] and int(entry["documentId"]) == item_id
-        ),
-        None,
-    )
-    return jsonify({"state": serialize_document_open_state(item)})
-
-
-@app.route("/api/content/training/documents/<int:item_id>/open", methods=["POST", "OPTIONS"])
-def mark_training_document_opened(item_id: int):
-    preflight = handle_options()
-    if preflight:
-        return preflight
-    _, auth_user, error = require_authenticated_user()
-    if error:
-        return error
-    document = get_training_document_by_id(item_id)
-    if not document or bool(document.get("isArchived", False)):
-        return jsonify({"error": "Document not found"}), 404
-    if not user_can_access_item(auth_user, document):
-        return jsonify({"error": "Access denied"}), 403
-    open_items = load_training_document_opens_store()
-    entry = next(
-        (
-            item
-            for item in open_items
-            if item["userId"] == auth_user["id"] and int(item["documentId"]) == item_id
-        ),
-        None,
-    )
-    payload = {
-        "userId": auth_user["id"],
-        "documentId": item_id,
-        "openedAt": now_ms(),
-    }
-    if entry:
-        entry.update(payload)
-    else:
-        open_items.append(payload)
-    save_training_document_opens_store(open_items)
-    refresh_training_document_counts(load_json_list_store(TRAINING_DOCUMENTS_STORE_PATH))
-    return jsonify({"ok": True, "state": serialize_document_open_state(payload)})
-
-
-@app.route("/api/content/training/documents/stats", methods=["GET"])
-def get_training_document_stats():
-    _, auth_user, error = require_module_manager("trainingDocuments")
-    if error:
-        return error
-    items = refresh_training_document_counts(load_json_list_store(TRAINING_DOCUMENTS_STORE_PATH))
-    open_items = load_training_document_opens_store()
-    stats = []
-    for document in items:
-        if bool(document.get("isArchived", False)):
-            continue
-        if not user_can_manage_item(auth_user, document, "trainingDocuments"):
-            continue
-        document_id = int(document.get("id", 0) or 0)
-        opened_count = len(
-            {
-                entry["userId"]
-                for entry in open_items
-                if int(entry["documentId"]) == document_id and int(entry["openedAt"]) > 0
-            }
-        )
-        stats.append(
-            {
-                "docId": document_id,
-                "title": str(document.get("title", "")),
-                "openedCount": opened_count,
-            }
-        )
-    return jsonify({"stats": stats})
-
-
-@app.route("/api/content/training/documents/<int:item_id>/archive", methods=["POST", "OPTIONS"])
-def archive_shared_training_document(item_id: int):
-    preflight = handle_options()
-    if preflight:
-        return preflight
-    _, actor, error = require_module_manager("trainingDocuments")
-    if error:
-        return error
-    items = load_json_list_store(TRAINING_DOCUMENTS_STORE_PATH)
-    document = next((item for item in items if int(item.get("id", 0) or 0) == item_id), None)
-    if not document:
-        return jsonify({"error": "Document not found"}), 404
-    if not user_can_manage_item(actor, document, "trainingDocuments"):
-        return scoped_access_denial(actor)
-    document["isArchived"] = True
-    save_json_list_store(TRAINING_DOCUMENTS_STORE_PATH, items)
-    record_content_audit(actor, "ARCHIVE_TRAINING_DOCUMENT", "trainingDocument", document)
-    return jsonify({"ok": True})
-
-
-@app.route("/api/content/training/documents/<int:item_id>/delete", methods=["POST", "OPTIONS"])
-def delete_shared_training_document(item_id: int):
-    preflight = handle_options()
-    if preflight:
-        return preflight
-    _, actor, error = require_module_manager("trainingDocuments")
-    if error:
-        return error
-    items = load_json_list_store(TRAINING_DOCUMENTS_STORE_PATH)
-    target = next((item for item in items if int(item.get("id", 0) or 0) == item_id), None)
-    if not target:
-        return jsonify({"error": "Document not found"}), 404
-    if not user_can_manage_item(actor, target, "trainingDocuments"):
-        return scoped_access_denial(actor)
-    filtered = [item for item in items if int(item.get("id", 0) or 0) != item_id]
-    save_json_list_store(TRAINING_DOCUMENTS_STORE_PATH, filtered)
-    record_content_audit(actor, "DELETE_TRAINING_DOCUMENT", "trainingDocument", target)
-    if target and str(target.get("storageType", "")).strip() == "Local":
-        remove_uploaded_file_if_unused(str(target.get("localFilename", "")).strip())
-    return jsonify({"ok": True})
-
-
-@app.route("/api/content/training/admin-overview", methods=["GET"])
-def get_admin_training_overview():
-    _, auth_user, error = require_authenticated_user()
-    if error:
-        return error
-    if not (
-        user_has_permission(auth_user, "trainingVideos")
-        or user_has_permission(auth_user, "trainingDocuments")
-    ):
-        return jsonify({"error": "Admin access required"}), 403
-    videos = refresh_training_video_counts(load_json_list_store(TRAINING_VIDEOS_STORE_PATH))
-    documents = refresh_training_document_counts(load_json_list_store(TRAINING_DOCUMENTS_STORE_PATH))
-    users = [
-        user
-        for user in load_user_store()
-        if user["isActive"] and user["isVerified"] and not user["isArchived"]
-    ]
-    progress_items = load_training_video_progress_store()
-    open_items = load_training_document_opens_store()
-    video_stats = []
-    for video in videos:
-        if bool(video.get("isArchived", False)):
-            continue
-        if not user_can_manage_item(auth_user, video, "trainingVideos"):
-            continue
-        video_id = int(video.get("id", 0) or 0)
-        eligible_users = eligible_users_for_item(video)
-        watched_user_ids = {
-            entry["userId"]
-            for entry in progress_items
-            if int(entry["videoId"]) == video_id and int(entry["progressPercent"]) > 0
-        }
-        completed_user_ids = {
-            entry["userId"]
-            for entry in progress_items
-            if int(entry["videoId"]) == video_id and bool(entry["isComplete"])
-        }
-        eligible_count = len(eligible_users)
-        incomplete_users = [
-            user["fullname"] for user in eligible_users if user["id"] not in completed_user_ids
-        ]
-        video_stats.append(
-            {
-                "id": video_id,
-                "title": str(video.get("title", "")),
-                "eligibleCount": eligible_count,
-                "watchedCount": len(watched_user_ids),
-                "completionPct": round((len(completed_user_ids) / eligible_count) * 100) if eligible_count else 0,
-                "isMandatory": bool(video.get("isMandatory", False)),
-                "branchScope": item_branch_scope(video),
-                "departmentScope": item_department_scope(video),
-                "incompleteCount": len(incomplete_users),
-                "incompleteUsers": incomplete_users[:100],
-            }
-        )
-    document_stats = []
-    for document in documents:
-        if bool(document.get("isArchived", False)):
-            continue
-        if not user_can_manage_item(auth_user, document, "trainingDocuments"):
-            continue
-        document_id = int(document.get("id", 0) or 0)
-        eligible_users = eligible_users_for_item(document)
-        opened_user_ids = {
-            entry["userId"]
-            for entry in open_items
-            if int(entry["documentId"]) == document_id and int(entry["openedAt"]) > 0
-        }
-        eligible_count = len(eligible_users)
-        incomplete_users = [
-            user["fullname"] for user in eligible_users if user["id"] not in opened_user_ids
-        ]
-        document_stats.append(
-            {
-                "id": document_id,
-                "title": str(document.get("title", "")),
-                "eligibleCount": eligible_count,
-                "openedCount": len(opened_user_ids),
-                "openedPct": round((len(opened_user_ids) / eligible_count) * 100) if eligible_count else 0,
-                "isMandatory": bool(document.get("isMandatory", False)),
-                "branchScope": item_branch_scope(document),
-                "departmentScope": item_department_scope(document),
-                "incompleteCount": len(incomplete_users),
-                "incompleteUsers": incomplete_users[:100],
-            }
-        )
-    return jsonify(
-        {
-            "overview": {
-                "totalVideos": len([item for item in videos if not bool(item.get("isArchived", False))]),
-                "totalDocuments": len([item for item in documents if not bool(item.get("isArchived", False))]),
-                "totalStaff": len(users),
-                "videoStats": video_stats,
-                "docStats": document_stats,
-            }
-        }
-    )
-
-
-@app.route("/api/content/training/videos/<int:item_id>/remind", methods=["POST", "OPTIONS"])
-def send_video_training_reminder(item_id: int):
-    preflight = handle_options()
-    if preflight:
-        return preflight
-    _, auth_user, error = require_module_manager("trainingVideos")
-    if error:
-        return error
-    video = get_training_video_by_id(item_id)
-    if not video:
-        return jsonify({"error": "Video not found"}), 404
-    if not user_can_manage_item(auth_user, video, "trainingVideos"):
-        return scoped_access_denial(auth_user)
-    try:
-        delivery = send_training_reminders("video", item_id)
-    except ValueError:
-        return jsonify({"error": "Video not found"}), 404
-    return jsonify({"ok": True, "delivery": delivery})
-
-
-@app.route("/api/content/training/documents/<int:item_id>/remind", methods=["POST", "OPTIONS"])
-def send_document_training_reminder(item_id: int):
-    preflight = handle_options()
-    if preflight:
-        return preflight
-    _, auth_user, error = require_module_manager("trainingDocuments")
-    if error:
-        return error
-    document = get_training_document_by_id(item_id)
-    if not document:
-        return jsonify({"error": "Document not found"}), 404
-    if not user_can_manage_item(auth_user, document, "trainingDocuments"):
-        return scoped_access_denial(auth_user)
-    try:
-        delivery = send_training_reminders("document", item_id)
-    except ValueError:
-        return jsonify({"error": "Document not found"}), 404
-    return jsonify({"ok": True, "delivery": delivery})
-
-
-@app.route("/", defaults={"path": ""}, methods=["GET"])
+# Legacy announcement, forms, and training endpoints were removed.\r\n\r\n@app.route("/", defaults={"path": ""}, methods=["GET"])
 @app.route("/<path:path>", methods=["GET"])
 def serve_frontend(path: str):
     requested = str(path or "").strip().lstrip("/")

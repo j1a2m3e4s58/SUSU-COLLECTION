@@ -18,7 +18,7 @@ import {
   exportBackup,
   getPortalSettings,
   getProductionStatus,
-  getStoredPortalControlPassword,
+  getStoredPortalAuthorization,
   importBackup,
   normalizeLegacySusuDepartments,
   removeTestCustomers,
@@ -52,7 +52,9 @@ const labelFields = [
 ];
 
 const numberFields = [
-  ["sessionDays", "Session Days"],
+  ["sessionMinutes", "Inactive Session Minutes"],
+  ["absoluteSessionHours", "Maximum Session Hours"],
+  ["sensitiveReauthMinutes", "Sensitive Action Confirmation Minutes"],
   ["verificationMinutes", "Verification Code Minutes"],
   ["passwordResetMinutes", "Password Reset Minutes"],
 ];
@@ -360,8 +362,8 @@ export default function PortalControl() {
   };
 
   const saveSettings = async () => {
-    const password = getStoredPortalControlPassword();
-    if (!password) {
+    const portalAuthorization = getStoredPortalAuthorization();
+    if (!portalAuthorization) {
       setError("Open Portal Control from the sidebar and enter the password first.");
       return;
     }
@@ -409,7 +411,7 @@ export default function PortalControl() {
     setError("");
     setSuccess("");
     try {
-      const updated = await updatePortalSettings(payload, password);
+      const updated = await updatePortalSettings(payload, portalAuthorization);
       setSettings(updated);
       setDraft(updated);
       setPendingRenames({ branches: {}, departments: {} });
