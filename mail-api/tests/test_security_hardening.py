@@ -641,6 +641,19 @@ def test_email_and_sms_delivery_adapters(monkeypatch, tmp_path):
     assert app_module.send_sms_token("0240000000", "123456") is True
 
 
+def test_test_mode_privileged_login_does_not_wait_for_email(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    owner = app_module.load_user_store()[0]
+
+    def unexpected_mail(*_args, **_kwargs):
+        raise AssertionError("Test Mode must not contact SMTP for privileged login")
+
+    monkeypatch.setattr(app_module, "send_mail", unexpected_mail)
+    challenge = app_module.issue_privileged_mfa_challenge(owner)
+    assert len(challenge["testCode"]) == 6
+    assert challenge["challengeId"]
+
+
 def test_postgresql_schema_integration_when_test_database_is_configured(monkeypatch, tmp_path):
     database_url = os.getenv("TEST_DATABASE_URL", "").strip()
     if not database_url:

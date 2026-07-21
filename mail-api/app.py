@@ -2276,10 +2276,10 @@ def issue_privileged_mfa_challenge(user: dict) -> dict:
         "<p>This code expires in 10 minutes.</p></div>"
     )
     is_test_mode = str(load_portal_settings_store().get("appMode", "test")).strip().lower() != "live"
-    try:
-        send_mail(user["email"], "BCB SUSU privileged login verification", text_body, html_body)
-    except Exception:
-        if not is_test_mode:
+    if not is_test_mode:
+        try:
+            send_mail(user["email"], "BCB SUSU privileged login verification", text_body, html_body)
+        except Exception:
             challenges.pop(challenge_id, None)
             atomic_write_json(PRIVILEGED_MFA_PATH, challenges)
             raise
