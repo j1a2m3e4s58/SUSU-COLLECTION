@@ -127,30 +127,29 @@ function EditStaffDialog({ staff, branches, open, onOpenChange, onSaved, onReset
           )}
         </div>
 
-        <div className="mt-6 grid grid-cols-2 gap-3">
-          <Button
-            type="button"
-            variant="outline"
-            className="h-10 min-w-0 px-2 text-xs sm:px-3 sm:text-sm"
-            onClick={() => onOpenChange(false)}
-          >
-            Cancel
-          </Button>
-          <Button type="button" className="h-10 min-w-0 px-2 text-xs sm:px-3 sm:text-sm" onClick={handleSave} disabled={saving}>
-            {saving ? "Saving..." : "Save Changes"}
-          </Button>
+        <div className="mt-6 grid grid-cols-3 gap-2">
           {onResetLogin && staff?.email && !staff.email.endsWith("@agents.local") && (
             <Button
               type="button"
               variant="outline"
-              className="col-span-2 mx-auto mt-2 h-10 gap-1.5 px-2 text-xs sm:px-3 sm:text-sm"
-              style={{ width: "calc(50% - 0.375rem)" }}
+              className="h-9 min-w-0 gap-1 px-1 text-[11px] sm:h-10 sm:gap-1.5 sm:px-2 sm:text-xs"
               onClick={() => onResetLogin(staff)}
             >
-              <KeyRound className="h-4 w-4 shrink-0" />
-              <span>Reset Login</span>
+              <KeyRound className="h-3.5 w-3.5 shrink-0" />
+              <span className="whitespace-nowrap">Reset Login</span>
             </Button>
           )}
+          <Button
+            type="button"
+            variant="outline"
+            className={`${onResetLogin && staff?.email && !staff.email.endsWith("@agents.local") ? "" : "col-start-2"} h-9 min-w-0 px-1 text-[11px] sm:h-10 sm:px-2 sm:text-xs`}
+            onClick={() => onOpenChange(false)}
+          >
+            Cancel
+          </Button>
+          <Button type="button" className="h-9 min-w-0 px-1 text-[11px] sm:h-10 sm:px-2 sm:text-xs" onClick={handleSave} disabled={saving}>
+            {saving ? "Saving..." : "Save Changes"}
+          </Button>
         </div>
       </DialogContent>
     </Dialog>

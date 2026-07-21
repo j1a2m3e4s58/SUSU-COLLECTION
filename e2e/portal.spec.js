@@ -161,7 +161,7 @@ test("desktop sidebar starts compact and expands with the chevron", async ({ pag
   expect((await sidebar.boundingBox()).width).toBeGreaterThanOrEqual(240);
 });
 
-test("mobile staff edit actions have equal sizing and reset spacing", async ({ page }, testInfo) => {
+test("mobile staff edit actions fit in one horizontal row", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.startsWith("mobile-"), "Mobile dialog assertion");
   await seedAuthenticatedUser(page, owner);
   await page.goto("/directory");
@@ -177,7 +177,10 @@ test("mobile staff edit actions have equal sizing and reset spacing", async ({ p
   ]);
   expect(cancelBox.height).toBe(saveBox.height);
   expect(resetBox.height).toBe(saveBox.height);
-  expect(resetBox.y).toBeGreaterThan(saveBox.y + saveBox.height + 8);
+  expect(Math.abs(resetBox.y - saveBox.y)).toBeLessThanOrEqual(1);
+  expect(Math.abs(cancelBox.y - saveBox.y)).toBeLessThanOrEqual(1);
+  expect(resetBox.x + resetBox.width).toBeLessThanOrEqual(cancelBox.x);
+  expect(cancelBox.x + cancelBox.width).toBeLessThanOrEqual(saveBox.x);
   expect(resetBox.x).toBeGreaterThanOrEqual(16);
   expect(resetBox.x + resetBox.width).toBeLessThanOrEqual(testInfo.project.use.viewport.width - 16);
 });
