@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '@/lib/AuthContext';
 import { WorkDateProvider } from '@/lib/WorkDateContext';
@@ -10,6 +10,11 @@ import { canManageCustomers as canManageCustomerRecords, isSusuAgent as isAgentU
 
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    const stored = window.localStorage.getItem('susu_sidebar_collapsed');
+    return stored === null ? true : stored === 'true';
+  });
   const { user, portalSettings } = useAuth();
   const location = useLocation();
   const isSusuAgent = isAgentUser(user);
@@ -30,9 +35,20 @@ export default function AppLayout() {
       .replace('Dashboard', 'Home')
       .replace('Agents', 'Agents');
 
+  useEffect(() => {
+    window.localStorage.setItem('susu_sidebar_collapsed', String(sidebarCollapsed));
+  }, [sidebarCollapsed]);
+
   return (
     <div className="min-h-screen bg-background flex">
-      <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} user={user} settings={portalSettings} />
+      <Sidebar
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        user={user}
+        settings={portalSettings}
+        collapsed={sidebarCollapsed}
+        onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
+      />
       <div className="flex-1 flex flex-col min-w-0">
         <WorkDateProvider>
           <AgentScopeProvider>

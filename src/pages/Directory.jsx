@@ -127,22 +127,31 @@ function EditStaffDialog({ staff, branches, open, onOpenChange, onSaved, onReset
           )}
         </div>
 
-        <DialogFooter className="sm:justify-between">
-          {onResetLogin && staff?.email && !staff.email.endsWith("@agents.local") && (
-            <Button type="button" variant="outline" className="gap-2" onClick={() => onResetLogin(staff)}>
-              <KeyRound className="h-4 w-4" />
-              Reset Login
-            </Button>
-          )}
-          <div className="flex justify-end gap-2">
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+        <div className="mt-6 grid grid-cols-2 gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            className="h-10 min-w-0 px-2 text-xs sm:px-3 sm:text-sm"
+            onClick={() => onOpenChange(false)}
+          >
             Cancel
           </Button>
-          <Button type="button" onClick={handleSave} disabled={saving}>
+          <Button type="button" className="h-10 min-w-0 px-2 text-xs sm:px-3 sm:text-sm" onClick={handleSave} disabled={saving}>
             {saving ? "Saving..." : "Save Changes"}
           </Button>
-          </div>
-        </DialogFooter>
+          {onResetLogin && staff?.email && !staff.email.endsWith("@agents.local") && (
+            <Button
+              type="button"
+              variant="outline"
+              className="col-span-2 mx-auto mt-2 h-10 gap-1.5 px-2 text-xs sm:px-3 sm:text-sm"
+              style={{ width: "calc(50% - 0.375rem)" }}
+              onClick={() => onResetLogin(staff)}
+            >
+              <KeyRound className="h-4 w-4 shrink-0" />
+              <span>Reset Login</span>
+            </Button>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );

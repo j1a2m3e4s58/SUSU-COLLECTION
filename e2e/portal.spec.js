@@ -35,6 +35,15 @@ const supervisor = {
   managedBranches: ["BAWJIASE"],
 };
 
+const owner = {
+  ...supervisor,
+  id: "owner-admin-1",
+  fullname: "Test Owner",
+  email: "owner@bawjiasecommunitybank.com",
+  role: "OwnerAdmin",
+  managedBranches: ["ALL"],
+};
+
 const customer = {
   id: "customer-1",
   account_name: "TEST CUSTOMER",
@@ -138,4 +147,37 @@ test("mobile navigation keeps the six operational destinations available", async
   await expect(nav.getByText(/directory/i)).toBeVisible();
   await expect(nav.getByText(/reports/i)).toBeVisible();
   await expect(page.locator("body")).not.toHaveCSS("overflow-x", "scroll");
+});
+
+test("desktop sidebar starts compact and expands with the chevron", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "Desktop sidebar assertion");
+  await seedAuthenticatedUser(page, owner);
+  await page.goto("/directory");
+  const sidebar = page.locator("aside");
+  await expect(sidebar).toBeVisible();
+  expect((await sidebar.boundingBox()).width).toBeLessThanOrEqual(90);
+  await page.getByRole("button", { name: "Expand sidebar" }).click();
+  await expect(page.getByRole("button", { name: "Collapse sidebar" })).toBeVisible();
+  expect((await sidebar.boundingBox()).width).toBeGreaterThanOrEqual(240);
+});
+
+test("mobile staff edit actions have equal sizing and reset spacing", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.startsWith("mobile-"), "Mobile dialog assertion");
+  await seedAuthenticatedUser(page, owner);
+  await page.goto("/directory");
+  await page.getByRole("button", { name: "Edit" }).nth(1).click();
+  const dialog = page.getByRole("dialog");
+  const cancel = dialog.getByRole("button", { name: "Cancel" });
+  const save = dialog.getByRole("button", { name: "Save Changes" });
+  const reset = dialog.getByRole("button", { name: "Reset Login" });
+  const [cancelBox, saveBox, resetBox] = await Promise.all([
+    cancel.boundingBox(),
+    save.boundingBox(),
+    reset.boundingBox(),
+  ]);
+  expect(cancelBox.height).toBe(saveBox.height);
+  expect(resetBox.height).toBe(saveBox.height);
+  expect(resetBox.y).toBeGreaterThan(saveBox.y + saveBox.height + 8);
+  expect(resetBox.x).toBeGreaterThanOrEqual(16);
+  expect(resetBox.x + resetBox.width).toBeLessThanOrEqual(testInfo.project.use.viewport.width - 16);
 });
