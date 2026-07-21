@@ -74,8 +74,8 @@ export const AuthProvider = ({ children }) => {
     return authUser;
   };
 
-  const completePrivilegedLogin = async (challengeId, code) => {
-    const authUser = normalizeUser(await verifyPrivilegedMfa(challengeId, code));
+  const completePrivilegedLogin = async (challengeId, code, trustDevice = true) => {
+    const authUser = normalizeUser(await verifyPrivilegedMfa(challengeId, code, trustDevice));
     setUser(authUser);
     pingPresence(authUser.id).catch(() => {});
     return authUser;

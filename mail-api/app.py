@@ -28,6 +28,8 @@ FRONTEND_PUBLIC_DIR = os.getenv("PORTAL_FRONTEND_DIR", os.path.join(BASE_DIR, "p
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 PG_LOCK_KEY = 2026071501
 SESSION_COOKIE_NAME = "susu_session"
+TRUSTED_DEVICE_COOKIE_NAME = "susu_trusted_device"
+TRUSTED_DEVICE_TTL_SECONDS = 30 * 24 * 60 * 60
 PORTAL_AUTHORIZATION_MINUTES = 10
 
 OFFICIAL_EMAIL_DOMAIN = "@bawjiasecommunitybank.com"
@@ -38,6 +40,7 @@ PENDING_VERIFICATIONS_PATH = os.path.join(DATA_DIR, "pending_verifications.json"
 RESET_TOKENS_PATH = os.path.join(DATA_DIR, "reset_tokens.json")
 AGENT_SETUP_TOKENS_PATH = os.path.join(DATA_DIR, "agent_setup_tokens.json")
 PRIVILEGED_MFA_PATH = os.path.join(DATA_DIR, "privileged_mfa.json")
+TRUSTED_DEVICES_PATH = os.path.join(DATA_DIR, "trusted_devices.json")
 AUTH_RATE_LIMITS_PATH = os.path.join(DATA_DIR, "auth_rate_limits.json")
 SESSIONS_STORE_PATH = os.path.join(DATA_DIR, "sessions_store.json")
 PORTAL_AUTHORIZATIONS_PATH = os.path.join(DATA_DIR, "portal_authorizations.json")
@@ -533,6 +536,7 @@ STORE_DEFAULTS: dict[str, object] = {
     SESSIONS_STORE_PATH: {},
     PORTAL_AUTHORIZATIONS_PATH: {},
     PRIVILEGED_MFA_PATH: {},
+    TRUSTED_DEVICES_PATH: {},
     AUTH_RATE_LIMITS_PATH: {},
     NOTIFICATIONS_STORE_PATH: [],
     AUDIT_LOGS_STORE_PATH: [],
@@ -1963,6 +1967,67 @@ def session_token_hash(token: str) -> str:
     return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
 
 
+def trusted_device_browser_hash() -> str:
+    user_agent = str(request.headers.get("User-Agent", "") or "").strip()
+    return hashlib.sha256(user_agent.encode("utf-8")).hexdigest()
+
+
+def load_trusted_devices() -> dict[str, dict]:
+    raw = read_json_file(TRUSTED_DEVICES_PATH, {})
+    if not isinstance(raw, dict):
+        return {}
+    current = now_seconds()
+    return {
+        str(token_hash): entry
+        for token_hash, entry in raw.items()
+        if isinstance(entry, dict)
+        and str(entry.get("userId", "")).strip()
+        and int(entry.get("expiresAt", 0) or 0) > current
+        and str(entry.get("browserHash", "")).strip()
+    }
+
+
+def save_trusted_devices(store: dict[str, dict]) -> None:
+    atomic_write_json(TRUSTED_DEVICES_PATH, store)
+
+
+def issue_trusted_device(user_id: str) -> str:
+    token = secrets.token_urlsafe(32)
+    current = now_seconds()
+    devices = load_trusted_devices()
+    devices[session_token_hash(token)] = {
+        "userId": user_id,
+        "browserHash": trusted_device_browser_hash(),
+        "createdAt": current,
+        "expiresAt": current + TRUSTED_DEVICE_TTL_SECONDS,
+    }
+    save_trusted_devices(devices)
+    return token
+
+
+def trusted_device_is_valid(user_id: str) -> bool:
+    token = str(request.cookies.get(TRUSTED_DEVICE_COOKIE_NAME, "") or "").strip()
+    if not token:
+        return False
+    entry = load_trusted_devices().get(session_token_hash(token))
+    return bool(
+        entry
+        and str(entry.get("userId", "")) == str(user_id)
+        and hmac.compare_digest(str(entry.get("browserHash", "")), trusted_device_browser_hash())
+    )
+
+
+def revoke_user_trusted_devices(user_id: str) -> None:
+    devices = load_trusted_devices()
+    filtered = {
+        token_hash: entry
+        for token_hash, entry in devices.items()
+        if str(entry.get("userId", "")) != str(user_id)
+    }
+    if filtered != devices:
+        save_trusted_devices(filtered)
+
+
 def load_sessions() -> dict[str, dict]:
     raw = read_json_file(SESSIONS_STORE_PATH, {})
     if not isinstance(raw, dict):
@@ -2054,6 +2119,30 @@ def clear_session_cookie(response):
     return response
 
 
+def set_trusted_device_cookie(response, token: str):
+    response.set_cookie(
+        TRUSTED_DEVICE_COOKIE_NAME,
+        token,
+        max_age=TRUSTED_DEVICE_TTL_SECONDS,
+        secure=session_cookie_secure(),
+        httponly=True,
+        samesite="Strict",
+        path="/",
+    )
+    return response
+
+
+def clear_trusted_device_cookie(response):
+    response.delete_cookie(
+        TRUSTED_DEVICE_COOKIE_NAME,
+        secure=session_cookie_secure(),
+        httponly=True,
+        samesite="Strict",
+        path="/",
+    )
+    return response
+
+
 def authenticated_response(user: dict, token: str):
     return set_session_cookie(jsonify({"ok": True, "user": user}), token)
 
@@ -2076,6 +2165,7 @@ def revoke_user_sessions(user_id: str) -> None:
     }
     if filtered != sessions:
         save_sessions(filtered)
+    revoke_user_trusted_devices(user_id)
 
 def require_authenticated_user():
     token = parse_session_token()
@@ -4961,6 +5051,12 @@ def auth_login():
 
         if privileged_mfa_required(user):
             clear_auth_failures(limit_key)
+            if trusted_device_is_valid(user["id"]):
+                user["lastSeen"] = now_ms()
+                save_user_store(users)
+                session_token = issue_session(user["id"])
+                record_audit_log(user, "LOGIN_TRUSTED_DEVICE", staff_audit_target(user))
+                return authenticated_response(user, session_token)
             try:
                 challenge = issue_privileged_mfa_challenge(user)
             except Exception as exc:
@@ -4990,6 +5086,7 @@ def auth_privileged_mfa_verify():
         return error
     challenge_id = str(data.get("challengeId", "") or "").strip()
     code = "".join(ch for ch in str(data.get("code", "") or "") if ch.isdigit())
+    trust_device = data.get("trustDevice") is True
     limit_key = rate_limit_key("privileged-mfa", challenge_id)
     if auth_rate_limited(limit_key):
         return jsonify({"error": "Too many verification attempts. Sign in again to request a new code."}), 429
@@ -5015,8 +5112,15 @@ def auth_privileged_mfa_verify():
     user["lastSeen"] = now_ms()
     save_user_store(users)
     session_token = issue_session(user["id"])
-    record_audit_log(user, "LOGIN_MFA_VERIFIED", staff_audit_target(user))
-    return authenticated_response(user, session_token)
+    record_audit_log(
+        user,
+        "LOGIN_MFA_VERIFIED",
+        staff_audit_target(user, {"trustedDevice": trust_device}),
+    )
+    response = authenticated_response(user, session_token)
+    if trust_device:
+        set_trusted_device_cookie(response, issue_trusted_device(user["id"]))
+    return response
 
 
 @app.route("/api/auth/agent-login", methods=["POST", "OPTIONS"])

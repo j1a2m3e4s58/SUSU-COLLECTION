@@ -682,6 +682,71 @@ def test_test_mode_privileged_login_does_not_wait_for_email(monkeypatch, tmp_pat
     assert challenge["challengeId"]
 
 
+def test_privileged_login_can_trust_same_browser_for_thirty_days(monkeypatch, tmp_path):
+    monkeypatch.setenv("PORTAL_DEFAULT_INITIAL_PASSWORD", "SeedPass123!")
+    app_module = load_app(monkeypatch, tmp_path)
+    client = app_module.app.test_client()
+    login_payload = {
+        "email": "jbruku@bawjiasecommunitybank.com",
+        "passwordHash": "SeedPass123!",
+    }
+    browser_headers = {"User-Agent": "BCB-Test-Browser/1.0"}
+
+    challenge_response = client.post("/api/auth/login", json=login_payload, headers=browser_headers)
+    challenge = challenge_response.get_json()
+    assert challenge_response.status_code == 200
+    assert challenge["requiresMfa"] is True
+
+    verified = client.post(
+        "/api/auth/privileged-mfa/verify",
+        json={
+            "challengeId": challenge["challengeId"],
+            "code": challenge["testCode"],
+            "trustDevice": True,
+        },
+        headers=browser_headers,
+    )
+    assert verified.status_code == 200
+    assert any(
+        app_module.TRUSTED_DEVICE_COOKIE_NAME in header
+        for header in verified.headers.getlist("Set-Cookie")
+    )
+
+    trusted_login = client.post("/api/auth/login", json=login_payload, headers=browser_headers)
+    assert trusted_login.status_code == 200
+    assert trusted_login.get_json().get("requiresMfa") is not True
+    assert trusted_login.get_json()["user"]["email"] == login_payload["email"]
+
+
+def test_trusted_privileged_login_is_browser_bound_and_revocable(monkeypatch, tmp_path):
+    monkeypatch.setenv("PORTAL_DEFAULT_INITIAL_PASSWORD", "SeedPass123!")
+    app_module = load_app(monkeypatch, tmp_path)
+    client = app_module.app.test_client()
+    owner = app_module.load_user_store()[0]
+    login_payload = {
+        "email": owner["email"],
+        "passwordHash": "SeedPass123!",
+    }
+    browser_headers = {"User-Agent": "BCB-Trusted-Browser/1.0"}
+    challenge = client.post("/api/auth/login", json=login_payload, headers=browser_headers).get_json()
+    client.post(
+        "/api/auth/privileged-mfa/verify",
+        json={"challengeId": challenge["challengeId"], "code": challenge["testCode"], "trustDevice": True},
+        headers=browser_headers,
+    )
+
+    other_browser = client.post(
+        "/api/auth/login",
+        json=login_payload,
+        headers={"User-Agent": "BCB-New-Browser/1.0"},
+    )
+    assert other_browser.get_json()["requiresMfa"] is True
+
+    app_module.revoke_user_sessions(owner["id"])
+    revoked_login = client.post("/api/auth/login", json=login_payload, headers=browser_headers)
+    assert revoked_login.get_json()["requiresMfa"] is True
+
+
 def test_postgresql_schema_integration_when_test_database_is_configured(monkeypatch, tmp_path):
     database_url = os.getenv("TEST_DATABASE_URL", "").strip()
     if not database_url:

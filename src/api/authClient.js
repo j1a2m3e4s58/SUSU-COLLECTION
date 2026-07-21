@@ -48,8 +48,8 @@ export async function loginWithEmail(email, password) {
   return storeAuthUser(data.user);
 }
 
-export async function verifyPrivilegedMfa(challengeId, code) {
-  const data = await request("/auth/privileged-mfa/verify", { challengeId, code });
+export async function verifyPrivilegedMfa(challengeId, code, trustDevice = true) {
+  const data = await request("/auth/privileged-mfa/verify", { challengeId, code, trustDevice });
   return storeAuthUser(data.user);
 }
 

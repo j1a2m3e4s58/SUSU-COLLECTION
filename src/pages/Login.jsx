@@ -30,6 +30,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [mfaChallenge, setMfaChallenge] = useState(null);
   const [mfaCode, setMfaCode] = useState("");
+  const [trustDevice, setTrustDevice] = useState(true);
 
   const showError = (message) => {
     toast({
@@ -57,6 +58,7 @@ export default function Login() {
       if (result?.requiresMfa) {
         setMfaChallenge(result);
         setMfaCode(result.testCode || "");
+        setTrustDevice(true);
         showSuccess(result.testCode ? `Test verification code: ${result.testCode}` : "A verification code was sent to your official email.");
         return;
       }
@@ -72,7 +74,7 @@ export default function Login() {
     e.preventDefault();
     setLoading(true);
     try {
-      await completePrivilegedLogin(mfaChallenge.challengeId, mfaCode);
+      await completePrivilegedLogin(mfaChallenge.challengeId, mfaCode, trustDevice);
       setMfaChallenge(null);
       setMfaCode("");
       navigate("/", { replace: true });
@@ -411,6 +413,22 @@ export default function Login() {
             <div className="space-y-1">
               <Label htmlFor="privileged-mfa-code" className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Verification Code</Label>
               <Input id="privileged-mfa-code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={mfaCode} onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))} className="h-11 glass-input text-center text-lg tracking-[0.3em]" autoFocus required />
+            </div>
+            <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/35 p-3">
+              <Checkbox
+                id="trust-privileged-device"
+                checked={trustDevice}
+                onCheckedChange={(checked) => setTrustDevice(checked === true)}
+                className="mt-0.5"
+              />
+              <div className="min-w-0">
+                <Label htmlFor="trust-privileged-device" className="cursor-pointer text-sm font-medium text-foreground">
+                  Trust this device for 30 days
+                </Label>
+                <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
+                  Verification will still be required on a new browser or after account security changes.
+                </p>
+              </div>
             </div>
             <Button type="submit" className="h-10 w-full glass-button text-sm font-bold uppercase tracking-[0.14em]" disabled={loading || mfaCode.length !== 6}>
               {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Verifying...</> : "Verify And Sign In"}
