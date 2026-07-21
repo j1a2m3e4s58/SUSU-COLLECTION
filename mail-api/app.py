@@ -5303,7 +5303,10 @@ def auth_password_reset():
     return jsonify({"ok": True})
 
 
-# Legacy announcement, forms, and training endpoints were removed.\r\n\r\n@app.route("/", defaults={"path": ""}, methods=["GET"])
+# Legacy announcement, forms, and training endpoints were removed.
+
+
+@app.route("/", defaults={"path": ""}, methods=["GET"])
 @app.route("/<path:path>", methods=["GET"])
 def serve_frontend(path: str):
     requested = str(path or "").strip().lstrip("/")

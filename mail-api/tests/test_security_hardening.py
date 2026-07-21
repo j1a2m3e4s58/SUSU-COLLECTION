@@ -83,6 +83,20 @@ def test_security_headers_are_applied(monkeypatch, tmp_path):
     assert response.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
 
 
+def test_frontend_serves_root_and_spa_deep_links(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    frontend_dir = tmp_path / "public"
+    frontend_dir.mkdir()
+    (frontend_dir / "index.html").write_text("<main>SUSU portal</main>", encoding="utf-8")
+    monkeypatch.setattr(app_module, "FRONTEND_PUBLIC_DIR", str(frontend_dir))
+    client = app_module.app.test_client()
+
+    for path in ("/", "/login", "/directory"):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert b"SUSU portal" in response.data
+
+
 def test_audit_restore_merge_preserves_existing_history(monkeypatch, tmp_path):
     app_module = load_app(monkeypatch, tmp_path)
     existing = [{
