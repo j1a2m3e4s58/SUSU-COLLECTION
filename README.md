@@ -101,6 +101,8 @@ Follow [Phase 1 Production Readiness](docs/phase-1-production-readiness.md) for 
 
 Follow [Phase 2 Data Governance](docs/phase-2-data-governance.md) for pagination, reconciliation, active-device revocation, retention rules, and the mandatory independent security review.
 
+Follow [Phase 3 Users and Roles](docs/phase-3-users-and-roles.md) for role-specific account creation, account lifecycle states, lockout visibility, and Live Mode test-data enforcement.
+
 ## Production Checklist
 
 1. Export a full Owner backup and store it outside Render.

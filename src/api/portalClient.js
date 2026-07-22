@@ -334,6 +334,15 @@ export async function runRetentionCleanup() {
   return apiRequest("/owner/retention/run", { method: "POST", body: {} });
 }
 
+export async function getOwnerAccountStatus({ page = 1, pageSize = 25, search = "", status = "", branch = "" } = {}) {
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  if (search) params.set("search", search);
+  if (status) params.set("status", status);
+  if (branch) params.set("branch", branch);
+  const data = await apiRequest(`/owner/accounts?${params.toString()}`);
+  return { items: data.accounts || [], pagination: data.pagination, summary: data.summary || {} };
+}
+
 export async function createAuditLog(payload) {
   const data = await apiRequest("/audit-logs", {
     method: "POST",

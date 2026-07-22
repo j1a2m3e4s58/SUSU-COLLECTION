@@ -1176,6 +1176,7 @@ def normalize_user(raw: dict) -> dict:
         "createdBySupervisorName": str(raw.get("createdBySupervisorName", "") or "").strip(),
         "forcePasswordChange": bool(raw.get("forcePasswordChange", False)),
         "setupComplete": bool(raw.get("setupComplete", True)),
+        "setupReason": str(raw.get("setupReason", "") or "").strip().lower(),
         "isTestData": bool(raw.get("isTestData", False)),
     }
 
@@ -1938,6 +1939,22 @@ def auth_rate_limited(key: str) -> bool:
     attempts = limits.get(key, [])
     atomic_write_json(AUTH_RATE_LIMITS_PATH, {item: stamps for item, stamps in limits.items() if stamps})
     return len(attempts) >= RATE_LIMIT_MAX_ATTEMPTS
+
+
+def user_lockout_status(user: dict, limits: dict[str, list[int]] | None = None) -> tuple[bool, int, int]:
+    rate_limits = limits if limits is not None else load_auth_rate_limits()
+    identifiers = {
+        str(user.get("email", "")).strip().lower(),
+        str(user.get("loginUsername", "")).strip().lower(),
+    } - {""}
+    matching = [
+        stamps for key, stamps in rate_limits.items()
+        if any(str(key).lower().endswith(f":{identifier}") for identifier in identifiers)
+    ]
+    attempts = max((len(stamps) for stamps in matching), default=0)
+    last_attempt = max((max(stamps) for stamps in matching if stamps), default=0)
+    locked = attempts >= RATE_LIMIT_MAX_ATTEMPTS and last_attempt + RATE_LIMIT_WINDOW_SECONDS > now_seconds()
+    return locked, attempts, (last_attempt + RATE_LIMIT_WINDOW_SECONDS) * 1000 if locked else 0
 
 
 def record_auth_failure(key: str) -> None:
@@ -5017,6 +5034,72 @@ def get_agents():
     return jsonify({"users": serialized})
 
 
+def account_lifecycle_record(user: dict, limits: dict[str, list[int]], session_counts: dict[str, int]) -> dict:
+    locked, failed_attempts, locked_until = user_lockout_status(user, limits)
+    setup_reason = str(user.get("setupReason", "") or "").strip().lower()
+    force_change = bool(user.get("forcePasswordChange", False))
+    setup_complete = bool(user.get("setupComplete", True))
+    if bool(user.get("isArchived", False)):
+        status = "archived"
+    elif locked:
+        status = "locked"
+    elif not bool(user.get("isActive", True)):
+        status = "inactive"
+    elif force_change and (setup_reason == "password-reset" or setup_complete):
+        status = "password-reset-required"
+    elif force_change or not setup_complete:
+        status = "first-login-pending"
+    else:
+        status = "active"
+    return {
+        "id": str(user.get("id", "")),
+        "fullname": str(user.get("fullname", "")),
+        "email": str(user.get("email", "")),
+        "username": str(user.get("loginUsername", "")),
+        "phone": str(user.get("phone", "")),
+        "role": str(user.get("role", "")),
+        "branch": str(user.get("branch", "")),
+        "status": status,
+        "isTestData": bool(user.get("isTestData", False)),
+        "failedAttempts": failed_attempts,
+        "lockedUntil": locked_until,
+        "activeSessions": session_counts.get(str(user.get("id", "")), 0),
+        "lastSeen": int(user.get("lastSeen", 0) or 0),
+        "registrationTime": int(user.get("registrationTime", 0) or 0),
+    }
+
+
+@app.route("/api/owner/accounts", methods=["GET"])
+def owner_account_status():
+    _, _, error = require_owner_admin()
+    if error:
+        return error
+    limits = load_auth_rate_limits()
+    session_counts = {}
+    for session in load_sessions().values():
+        user_id = str(session.get("userId", ""))
+        session_counts[user_id] = session_counts.get(user_id, 0) + 1
+    records = [account_lifecycle_record(user, limits, session_counts) for user in load_user_store()]
+    summary = {}
+    for record in records:
+        summary[record["status"]] = summary.get(record["status"], 0) + 1
+    search = str(request.args.get("search", "") or "").strip().lower()
+    status_filter = str(request.args.get("status", "") or "").strip().lower()
+    branch_filter = str(request.args.get("branch", "") or "").strip().upper()
+    if search:
+        records = [
+            item for item in records
+            if search in " ".join([item["fullname"], item["email"], item["username"], item["phone"]]).lower()
+        ]
+    if status_filter:
+        records = [item for item in records if item["status"] == status_filter]
+    if branch_filter:
+        records = [item for item in records if item["branch"].upper() == branch_filter]
+    records.sort(key=lambda item: (item["status"] != "locked", item["fullname"].lower()))
+    page_items, pagination = paginate_items(records)
+    return jsonify({"accounts": page_items, "pagination": pagination, "summary": summary})
+
+
 @app.route("/api/staff/archived", methods=["GET"])
 def get_archived_staff():
     _, auth_user, error = require_owner_admin()
@@ -5397,6 +5480,7 @@ def create_agent_account():
         "createdBySupervisorName": auth_user["fullname"],
         "forcePasswordChange": True,
         "setupComplete": False,
+        "setupReason": "first-login",
     })
     users.append(user)
     passwords = load_password_store()
@@ -5443,6 +5527,7 @@ def reset_agent_password(user_id: str):
             return jsonify({"error": "That username is already assigned to another agent."}), 400
     user["forcePasswordChange"] = True
     user["setupComplete"] = False
+    user["setupReason"] = "password-reset"
     if next_username:
         user["loginUsername"] = next_username
     passwords = load_password_store()
@@ -5992,6 +6077,7 @@ def auth_agent_complete_setup():
             user["loginUsername"] = new_username
         user["forcePasswordChange"] = False
         user["setupComplete"] = True
+        user["setupReason"] = ""
         user["lastSeen"] = now_ms()
         passwords[agent_password_key(new_username)] = hash_password_for_storage(new_password)
         save_user_store(users)

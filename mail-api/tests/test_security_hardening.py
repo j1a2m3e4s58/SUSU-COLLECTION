@@ -1074,3 +1074,60 @@ def test_retention_cleanup_keeps_unread_notifications_and_removes_expired_record
     assert summary["notifications"] == 1
     assert summary["verificationRecords"] >= 1
     assert [item["id"] for item in app_module.load_json_list_store(app_module.NOTIFICATIONS_STORE_PATH)] == [2]
+
+
+def test_owner_account_status_reports_lockout_and_first_login(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    owner = app_module.load_user_store()[0]
+    agent = app_module.normalize_user({
+        "id": "agent-status-1", "fullname": "Status Agent", "phone": "0240000000",
+        "email": "statusagent@agents.local", "loginUsername": "statusagent", "role": "GeneralStaff",
+        "position": "SUSU Agent", "department": "SUSU", "branch": "HEAD OFFICE",
+        "isActive": True, "isVerified": True, "isArchived": False,
+        "forcePasswordChange": True, "setupComplete": False, "setupReason": "first-login",
+    })
+    users = app_module.load_user_store()
+    users.append(agent)
+    app_module.save_user_store(users)
+    now = app_module.now_seconds()
+    app_module.atomic_write_json(app_module.AUTH_RATE_LIMITS_PATH, {
+        "agent-login:127.0.0.1:statusagent": [now] * app_module.RATE_LIMIT_MAX_ATTEMPTS,
+    })
+    client = app_module.app.test_client()
+    response = client.get("/api/owner/accounts?status=locked", headers=auth_headers(app_module, owner["id"]))
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert len(payload["accounts"]) == 1
+    assert payload["accounts"][0]["status"] == "locked"
+    assert payload["accounts"][0]["failedAttempts"] == app_module.RATE_LIMIT_MAX_ATTEMPTS
+
+
+def test_live_mode_rejects_test_staff(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    owner = app_module.load_user_store()[0]
+    users = app_module.load_user_store()
+    test_user = dict(users[-1])
+    test_user.update({"id": "test-live-block", "email": "liveblock@bawjiasecommunitybank.com", "isTestData": True})
+    users.append(test_user)
+    app_module.save_user_store(users)
+    client = app_module.app.test_client()
+    headers = auth_headers(app_module, owner["id"])
+    authorization = unlock_portal_control(client, headers)
+    settings = app_module.load_portal_settings_store()
+    response = client.post(
+        "/api/portal-settings",
+        json={**settings, "appMode": "live", "portalAuthorization": authorization},
+        headers=headers,
+    )
+    assert response.status_code == 400
+    assert "test staff" in response.get_json()["error"].lower()
+
+
+def test_frontend_keeps_role_specific_creation_actions():
+    root = pathlib.Path(__file__).resolve().parents[2] / "src"
+    agent_page = (root / "pages" / "AgentManagement.jsx").read_text(encoding="utf-8")
+    supervisor_page = (root / "pages" / "SupervisorManagement.jsx").read_text(encoding="utf-8")
+    all_pages = "\n".join(path.read_text(encoding="utf-8") for path in (root / "pages").glob("*.jsx"))
+    assert "Add Agent" in agent_page
+    assert "Add Supervisor" in supervisor_page
+    assert ">Add User<" not in all_pages
