@@ -16,7 +16,8 @@ from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
 from urllib.request import Request, urlopen
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, redirect, request, send_file, send_from_directory
+from flask import Flask, g, has_request_context, jsonify, redirect, request, send_file, send_from_directory
+from werkzeug.exceptions import HTTPException
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 from openpyxl import load_workbook
@@ -290,6 +291,85 @@ app = Flask(__name__, static_folder=None)
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 
+_MONITOR_ALERT_LOCK = threading.Lock()
+_MONITOR_ALERT_TIMES: dict[str, float] = {}
+
+
+def monitoring_destination_configured() -> bool:
+    return bool(env_secret("MONITORING_ALERT_WEBHOOK_URL") or env_secret("MONITORING_ALERT_EMAIL"))
+
+
+def _deliver_monitoring_alert(payload: dict) -> None:
+    webhook_url = env_secret("MONITORING_ALERT_WEBHOOK_URL")
+    alert_email = env_secret("MONITORING_ALERT_EMAIL")
+    if webhook_url:
+        try:
+            body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
+            alert_request = Request(
+                webhook_url,
+                data=body,
+                headers={"Content-Type": "application/json", "User-Agent": "BCB-SUSU-Monitor/1.0"},
+                method="POST",
+            )
+            with urlopen(alert_request, timeout=5) as response:
+                if int(getattr(response, "status", 200) or 200) >= 400:
+                    raise RuntimeError(f"Monitoring webhook returned HTTP {response.status}")
+        except Exception as exc:
+            app.logger.error("Monitoring webhook delivery failed: %s", exc)
+    if alert_email:
+        try:
+            summary = f"{payload.get('severity', 'error').upper()}: {payload.get('message', 'Portal alert')}"
+            details = json.dumps(payload, indent=2, ensure_ascii=True)
+            send_mail(alert_email, f"BCB SUSU alert: {payload.get('event', 'system')}", f"{summary}\n\n{details}", f"<h2>{summary}</h2><pre>{details}</pre>")
+        except Exception as exc:
+            app.logger.error("Monitoring email delivery failed: %s", exc)
+
+
+def emit_production_alert(
+    event: str,
+    message: str,
+    *,
+    severity: str = "error",
+    context: dict | None = None,
+    throttle_key: str | None = None,
+    throttle_seconds: int = 300,
+) -> None:
+    request_id = ""
+    route = ""
+    method = ""
+    if has_request_context():
+        request_id = str(getattr(g, "request_id", "") or "")
+        route = request.path
+        method = request.method
+    safe_context = {
+        str(key): value
+        for key, value in (context or {}).items()
+        if key not in {"password", "passwordHash", "token", "code", "accountNumber", "email", "phone"}
+    }
+    payload = {
+        "event": str(event),
+        "severity": str(severity),
+        "message": str(message),
+        "environment": env_secret("MONITORING_ENVIRONMENT") or ("render" if os.getenv("RENDER") else "local"),
+        "service": "susu-collection-portal",
+        "timestamp": int(time.time()),
+        "requestId": request_id,
+        "route": route,
+        "method": method,
+        "context": safe_context,
+    }
+    app.logger.error("MONITOR_EVENT %s", json.dumps(payload, ensure_ascii=True, sort_keys=True))
+    if not monitoring_destination_configured():
+        return
+    key = throttle_key or f"{event}:{route}:{safe_context.get('status', '')}"
+    now = time.time()
+    with _MONITOR_ALERT_LOCK:
+        last_sent = _MONITOR_ALERT_TIMES.get(key, 0)
+        if now - last_sent < max(0, throttle_seconds):
+            return
+        _MONITOR_ALERT_TIMES[key] = now
+    threading.Thread(target=_deliver_monitoring_alert, args=(payload,), daemon=True).start()
+
 
 def pg_enabled() -> bool:
     return bool(DATABASE_URL)
@@ -302,7 +382,7 @@ def pg_connect():
         import psycopg
     except ImportError as exc:
         raise RuntimeError("DATABASE_URL is configured but psycopg is not installed") from exc
-    return psycopg.connect(DATABASE_URL)
+    return psycopg.connect(DATABASE_URL, connect_timeout=5)
 
 
 _PG_TABLE_READY = False
@@ -582,6 +662,38 @@ def allowed_origins() -> set[str]:
     return {item.strip() for item in raw.split(",") if item.strip()}
 
 
+@app.before_request
+def begin_request_tracking():
+    g.request_id = request.headers.get("X-Request-ID") or secrets.token_hex(8)
+    g.request_started_at = time.perf_counter()
+
+
+@app.errorhandler(Exception)
+def handle_unexpected_error(exc):
+    if isinstance(exc, HTTPException):
+        return exc
+    app.logger.exception("Unhandled request failure [%s]", getattr(g, "request_id", "unknown"))
+    g.unhandled_alerted = True
+    if request.path == "/api/collections" and request.method == "POST":
+        emit_production_alert(
+            "DEPOSIT_PROCESSING_FAILED",
+            "A deposit could not be processed because of an internal system error.",
+            severity="critical",
+            context={"exceptionType": type(exc).__name__},
+            throttle_key="deposit-processing-failure",
+            throttle_seconds=60,
+        )
+    emit_production_alert(
+        "API_UNHANDLED_EXCEPTION",
+        "An API request failed unexpectedly.",
+        severity="critical",
+        context={"exceptionType": type(exc).__name__},
+        throttle_key=f"api-exception:{request.path}",
+        throttle_seconds=60,
+    )
+    return jsonify({"error": "The server could not complete this request.", "requestId": getattr(g, "request_id", "")}), 500
+
+
 @app.after_request
 def add_cors_headers(response):
     origin = request.headers.get("Origin")
@@ -609,6 +721,16 @@ def add_cors_headers(response):
     response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
     if session_cookie_secure():
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["X-Request-ID"] = str(getattr(g, "request_id", "") or "")
+    elapsed = time.perf_counter() - float(getattr(g, "request_started_at", time.perf_counter()))
+    if request.path.startswith("/api/") and response.status_code >= 500 and not getattr(g, "unhandled_alerted", False):
+        emit_production_alert(
+            "API_FAILURE",
+            "An API endpoint returned a server error.",
+            context={"status": response.status_code, "durationMs": round(elapsed * 1000)},
+            throttle_key=f"api-failure:{request.path}:{response.status_code}",
+            throttle_seconds=60,
+        )
     return response
 
 
@@ -2683,7 +2805,34 @@ def send_persisted_upload(filename: str):
 
 @app.route("/api/health", methods=["GET"])
 def health():
-    return jsonify({"ok": True})
+    started_at = time.perf_counter()
+    database_required = str(os.getenv("PORTAL_REQUIRE_DATABASE", "")).strip().lower() in {"1", "true", "yes", "on"}
+    if not pg_enabled():
+        payload = {
+            "ok": not database_required,
+            "status": "degraded" if not database_required else "unhealthy",
+            "storageBackend": "json-file",
+            "database": {"configured": False, "reachable": False},
+            "durationMs": round((time.perf_counter() - started_at) * 1000),
+        }
+        return jsonify(payload), 200 if payload["ok"] else 503
+    try:
+        with pg_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                row = cur.fetchone()
+        reachable = bool(row and row[0] == 1)
+    except Exception as exc:
+        app.logger.error("Database readiness check failed: %s", exc)
+        reachable = False
+    payload = {
+        "ok": reachable,
+        "status": "healthy" if reachable else "unhealthy",
+        "storageBackend": "postgres",
+        "database": {"configured": True, "reachable": reachable},
+        "durationMs": round((time.perf_counter() - started_at) * 1000),
+    }
+    return jsonify(payload), 200 if reachable else 503
 
 
 @app.route("/api/production-status", methods=["GET"])
@@ -2710,12 +2859,16 @@ def production_status():
             "ok": bool(env_secret("SMS_WEBHOOK_URL")),
             "label": "SMS webhook configured",
         },
+        "monitoring": {
+            "ok": monitoring_destination_configured(),
+            "label": "Monitoring webhook or alert email configured",
+        },
         "testDataRemoved": {
             "ok": test_staff_count == 0 and test_customer_count == 0,
             "label": f"Test data removed ({test_staff_count} staff, {test_customer_count} customers remaining)",
         },
     }
-    required = ["database", "portalPublicUrl", "mail", "testDataRemoved"]
+    required = ["database", "portalPublicUrl", "mail", "monitoring", "testDataRemoved"]
     live_ready = all(checks[key]["ok"] for key in required)
     return jsonify({
         "storageBackend": "postgres" if pg_enabled() else "json-file",
@@ -5222,6 +5375,14 @@ def auth_login():
             return jsonify({"error": "Password is required"}), 400
         limit_key = rate_limit_key("staff-login", email)
         if auth_rate_limited(limit_key):
+            emit_production_alert(
+                "LOGIN_RATE_LIMITED",
+                "A staff login was blocked after repeated failed attempts.",
+                severity="warning",
+                context={"reason": "rate_limited"},
+                throttle_key="login-rate-limited",
+                throttle_seconds=900,
+            )
             return jsonify({"error": "Too many login attempts. Please wait 15 minutes and try again."}), 429
 
         passwords = load_password_store()
@@ -5233,6 +5394,14 @@ def auth_login():
                 "LOGIN_FAILED",
                 {"email": email, "reason": "invalid_credentials"},
             )
+            emit_production_alert(
+                "LOGIN_FAILED",
+                "A staff login failed because the credentials were invalid.",
+                severity="warning",
+                context={"reason": "invalid_credentials"},
+                throttle_key="login-failed",
+                throttle_seconds=300,
+            )
             return jsonify({"error": "Invalid email or password"}), 401
 
         users = load_user_store()
@@ -5243,6 +5412,14 @@ def auth_login():
                 None,
                 "LOGIN_FAILED",
                 {"email": email, "reason": "inactive_or_missing_account"},
+            )
+            emit_production_alert(
+                "LOGIN_FAILED",
+                "A staff login failed for an inactive or unavailable account.",
+                severity="warning",
+                context={"reason": "inactive_or_missing_account"},
+                throttle_key="login-failed",
+                throttle_seconds=300,
             )
             return jsonify({"error": "Invalid email or password"}), 401
         if not user["isVerified"]:

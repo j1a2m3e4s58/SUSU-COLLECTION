@@ -81,6 +81,59 @@ def test_security_headers_are_applied(monkeypatch, tmp_path):
     assert response.headers["X-Frame-Options"] == "DENY"
     assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
     assert response.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
+    assert response.headers["X-Request-ID"]
+
+
+def test_health_check_verifies_postgresql_connectivity(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            return False
+        def execute(self, query):
+            assert query == "SELECT 1"
+        def fetchone(self):
+            return (1,)
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            return False
+        def cursor(self):
+            return FakeCursor()
+
+    monkeypatch.setattr(app_module, "pg_enabled", lambda: True)
+    monkeypatch.setattr(app_module, "pg_connect", lambda: FakeConnection())
+    response = app_module.app.test_client().get("/api/health")
+    assert response.status_code == 200
+    assert response.get_json()["database"] == {"configured": True, "reachable": True}
+
+
+def test_health_check_reports_database_failure_and_emits_alert(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    events = []
+    monkeypatch.setattr(app_module, "pg_enabled", lambda: True)
+    monkeypatch.setattr(app_module, "pg_connect", lambda: (_ for _ in ()).throw(RuntimeError("database offline")))
+    monkeypatch.setattr(app_module, "emit_production_alert", lambda event, *_args, **_kwargs: events.append(event))
+    response = app_module.app.test_client().get("/api/health")
+    assert response.status_code == 503
+    assert response.get_json()["database"]["reachable"] is False
+    assert "API_FAILURE" in events
+
+
+def test_failed_login_emits_throttled_monitoring_event(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    events = []
+    monkeypatch.setattr(app_module, "emit_production_alert", lambda event, *_args, **_kwargs: events.append(event))
+    response = app_module.app.test_client().post("/api/auth/login", json={
+        "email": "lawuah@bawjiasecommunitybank.com",
+        "passwordHash": "WrongPassword123!",
+    })
+    assert response.status_code == 401
+    assert events == ["LOGIN_FAILED"]
 
 
 def test_frontend_serves_root_and_spa_deep_links(monkeypatch, tmp_path):
@@ -727,6 +780,49 @@ def test_concurrent_deposits_allow_only_one_daily_record(monkeypatch, tmp_path):
         statuses = sorted(executor.map(submit, ["parallel-1", "parallel-2"]))
     assert statuses == [200, 400]
     assert len(app_module.load_json_list_store(app_module.COLLECTIONS_STORE_PATH)) == 1
+
+
+def test_unhandled_deposit_failure_returns_request_id_and_emits_critical_alert(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    agent = {
+        "id": "agent-monitoring",
+        "fullname": "Monitoring Agent",
+        "phone": "0240000012",
+        "email": "monitoring@agents.local",
+        "role": "GeneralStaff",
+        "department": "SUSU",
+        "branch": "BAWJIASE",
+        "isActive": True,
+        "isVerified": True,
+    }
+    save_test_users(app_module, agent)
+    app_module.save_json_list_store(app_module.CUSTOMERS_STORE_PATH, [{
+        "id": "customer-monitoring",
+        "account_name": "Monitoring Customer",
+        "account_number": "1310000100098",
+        "branch_name": "BAWJIASE",
+        "customer_status": "active",
+        "total_deposits": 0,
+    }])
+    token = app_module.issue_session(agent["id"])
+    events = []
+    original_save = app_module.save_json_list_store
+
+    def failing_collection_save(path, value):
+        if path == app_module.COLLECTIONS_STORE_PATH:
+            raise RuntimeError("simulated storage failure")
+        return original_save(path, value)
+
+    monkeypatch.setattr(app_module, "save_json_list_store", failing_collection_save)
+    monkeypatch.setattr(app_module, "emit_production_alert", lambda event, *_args, **_kwargs: events.append(event))
+    response = app_module.app.test_client().post(
+        "/api/collections",
+        json={"customer_id": "customer-monitoring", "amount": 10, "idempotency_key": "monitoring-test"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 500
+    assert response.get_json()["requestId"]
+    assert events == ["DEPOSIT_PROCESSING_FAILED", "API_UNHANDLED_EXCEPTION"]
 
 
 def test_backup_export_and_restore_round_trip(monkeypatch, tmp_path):

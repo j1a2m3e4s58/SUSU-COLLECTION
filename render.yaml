@@ -27,6 +27,14 @@ services:
         sync: false
       - key: TRUST_PROXY_HEADERS
         value: true
+      - key: PORTAL_REQUIRE_DATABASE
+        value: true
+      - key: MONITORING_ENVIRONMENT
+        value: production
+      - key: MONITORING_ALERT_WEBHOOK_URL
+        sync: false
+      - key: MONITORING_ALERT_EMAIL
+        sync: false
       - key: SMS_WEBHOOK_URL
         sync: false
       - key: SMS_WEBHOOK_API_KEY

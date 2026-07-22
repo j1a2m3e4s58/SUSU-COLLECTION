@@ -24,6 +24,9 @@ PORT=4190
 PORTAL_DEFAULT_INITIAL_PASSWORD=local-test-password
 PORTAL_PUBLIC_URL=http://127.0.0.1:5173
 ALLOWED_ORIGINS=http://127.0.0.1:5173
+MONITORING_ALERT_EMAIL=operations@example.com
+# Or use a compatible HTTPS webhook:
+# MONITORING_ALERT_WEBHOOK_URL=https://alerts.example.com/hooks/...
 ```
 
 Start the backend:
@@ -88,10 +91,13 @@ Configure all required secrets in Render:
 - `MAIL_USERNAME`
 - `MAIL_PASSWORD`
 - `MAIL_DEFAULT_SENDER`
+- `MONITORING_ALERT_EMAIL` or `MONITORING_ALERT_WEBHOOK_URL`
 - `SMS_WEBHOOK_URL`
 - `SMS_WEBHOOK_API_KEY` when required by the SMS provider
 
-`DATABASE_URL` is supplied by the managed PostgreSQL service in the Blueprint. Portal Control is unlocked with the Owner account password and a six-digit verification code. Do not switch the portal to Live Mode until Portal Control reports PostgreSQL, public URL, mail, and SMS as ready.
+`DATABASE_URL` is supplied by the managed PostgreSQL service in the Blueprint. Portal Control is unlocked with the Owner account password and a six-digit verification code. Do not switch the portal to Live Mode until Portal Control reports PostgreSQL, public URL, mail, monitoring, and SMS as ready.
+
+Follow [Phase 1 Production Readiness](docs/phase-1-production-readiness.md) for the Render workflow test, PostgreSQL recovery drill, health verification, and alert setup.
 
 ## Production Checklist
 
