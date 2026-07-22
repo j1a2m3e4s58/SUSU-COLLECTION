@@ -1015,6 +1015,7 @@ def normalize_user(raw: dict) -> dict:
         "createdBySupervisorName": str(raw.get("createdBySupervisorName", "") or "").strip(),
         "forcePasswordChange": bool(raw.get("forcePasswordChange", False)),
         "setupComplete": bool(raw.get("setupComplete", True)),
+        "isTestData": bool(raw.get("isTestData", False)),
     }
 
 
@@ -2690,6 +2691,8 @@ def production_status():
     _, _, error = require_owner_admin()
     if error:
         return error
+    test_staff_count = sum(1 for item in load_user_store() if bool(item.get("isTestData")))
+    test_customer_count = sum(1 for item in load_json_list_store(CUSTOMERS_STORE_PATH) if bool(item.get("isTestData")))
     checks = {
         "database": {
             "ok": pg_enabled(),
@@ -2707,8 +2710,12 @@ def production_status():
             "ok": bool(env_secret("SMS_WEBHOOK_URL")),
             "label": "SMS webhook configured",
         },
+        "testDataRemoved": {
+            "ok": test_staff_count == 0 and test_customer_count == 0,
+            "label": f"Test data removed ({test_staff_count} staff, {test_customer_count} customers remaining)",
+        },
     }
-    required = ["database", "portalPublicUrl", "mail"]
+    required = ["database", "portalPublicUrl", "mail", "testDataRemoved"]
     live_ready = all(checks[key]["ok"] for key in required)
     return jsonify({
         "storageBackend": "postgres" if pg_enabled() else "json-file",
@@ -3085,6 +3092,12 @@ def update_portal_settings():
     if authorization_error:
         return authorization_error
     current_settings = load_portal_settings_store()
+    requested_mode = "live" if str(data.get("appMode", "test")).strip().lower() == "live" else "test"
+    if requested_mode == "live":
+        has_test_staff = any(bool(item.get("isTestData")) for item in load_user_store())
+        has_test_customers = any(bool(item.get("isTestData")) for item in load_json_list_store(CUSTOMERS_STORE_PATH))
+        if has_test_staff or has_test_customers:
+            return jsonify({"error": "Remove all loaded test staff and test customers before switching to Live Mode."}), 400
     branches = normalize_portal_branches(data.get("branches"))
     departments = normalize_portal_departments(data.get("departments"))
     branch_renames = normalize_portal_rename_map(data.get("branchRenames"))
@@ -3139,7 +3152,7 @@ def update_portal_settings():
         "dashboardLabel": str(data.get("dashboardLabel") or DEFAULT_PORTAL_SETTINGS["dashboardLabel"]),
         "trainingLabel": str(data.get("trainingLabel") or DEFAULT_PORTAL_SETTINGS["trainingLabel"]),
         "formsLabel": str(data.get("formsLabel") or DEFAULT_PORTAL_SETTINGS["formsLabel"]),
-        "appMode": "live" if str(data.get("appMode", "test")).strip().lower() == "live" else "test",
+        "appMode": requested_mode,
         "publicRegistrationEnabled": bool(data.get("publicRegistrationEnabled", False)),
         "profileLabel": str(data.get("profileLabel") or DEFAULT_PORTAL_SETTINGS["profileLabel"]),
         "activeStaffLabel": str(data.get("activeStaffLabel") or DEFAULT_PORTAL_SETTINGS["activeStaffLabel"]),
@@ -3487,6 +3500,101 @@ def seed_test_customers():
         {"createdCount": len(created), "skippedCount": len(skipped), "testMode": settings.get("appMode", "test")},
     )
     return jsonify({"ok": True, "createdCount": len(created), "skipped": skipped, "customers": created})
+
+
+@app.route("/api/maintenance/seed-test-staff", methods=["POST", "OPTIONS"])
+def seed_test_staff():
+    preflight = handle_options()
+    if preflight:
+        return preflight
+    _, auth_user, error = require_owner_admin()
+    if error:
+        return error
+    settings = load_portal_settings_store()
+    if str(settings.get("appMode", "test")).lower() != "test":
+        return jsonify({"error": "Switch the portal to Test Mode before loading test staff."}), 400
+    if not DEFAULT_INITIAL_PASSWORD:
+        return jsonify({"error": "PORTAL_DEFAULT_INITIAL_PASSWORD is not configured on the server."}), 500
+
+    valid_branches = {
+        str(item or "").strip().upper()
+        for item in settings.get("branches", [])
+        if str(item or "").strip()
+    }
+    fallback_branch = next(iter(valid_branches), "HEAD OFFICE")
+    users = load_user_store()
+    passwords = load_password_store()
+    existing_emails = {str(item.get("email", "")).strip().lower() for item in users}
+    created = []
+    skipped = []
+
+    for seed_user in INITIAL_USERS:
+        email = str(seed_user.get("email", "")).strip().lower()
+        if email in existing_emails:
+            skipped.append({"email": email, "reason": "already exists"})
+            continue
+        branch = str(seed_user.get("branch", "")).strip().upper()
+        user = normalize_user({
+            **seed_user,
+            "branch": branch if branch in valid_branches else fallback_branch,
+            "lastSeen": 0,
+            "registrationTime": now_ms(),
+            "isTestData": True,
+        })
+        users.append(user)
+        existing_emails.add(email)
+        if not passwords.get(email):
+            passwords[email] = hash_password_for_storage(DEFAULT_INITIAL_PASSWORD)
+        created.append(user)
+
+    if created:
+        save_user_store(users)
+        save_password_store(passwords)
+    record_audit_log(
+        auth_user,
+        "SEED_TEST_STAFF",
+        {
+            "createdCount": len(created),
+            "skippedCount": len(skipped),
+            "emails": [item.get("email") for item in created],
+        },
+    )
+    return jsonify({
+        "ok": True,
+        "createdCount": len(created),
+        "skippedCount": len(skipped),
+        "users": created,
+    })
+
+
+@app.route("/api/maintenance/remove-test-staff", methods=["POST", "OPTIONS"])
+def remove_test_staff():
+    preflight = handle_options()
+    if preflight:
+        return preflight
+    _, auth_user, error = require_owner_admin()
+    if error:
+        return error
+    settings = load_portal_settings_store()
+    if str(settings.get("appMode", "test")).lower() != "test":
+        return jsonify({"error": "Switch the portal to Test Mode before removing test staff."}), 400
+
+    users = load_user_store()
+    removed_users = [item for item in users if bool(item.get("isTestData")) and not is_owner_admin(item)]
+    removed_ids = {str(item.get("id", "")) for item in removed_users}
+    removed_emails = {str(item.get("email", "")).strip().lower() for item in removed_users}
+    if removed_users:
+        save_user_store([item for item in users if str(item.get("id", "")) not in removed_ids])
+        passwords = load_password_store()
+        save_password_store({email: value for email, value in passwords.items() if email not in removed_emails})
+        for user_id in removed_ids:
+            revoke_user_sessions(user_id)
+    record_audit_log(
+        auth_user,
+        "REMOVE_TEST_STAFF",
+        {"removedCount": len(removed_users), "emails": sorted(removed_emails)},
+    )
+    return jsonify({"ok": True, "removedCount": len(removed_users)})
 
 
 @app.route("/api/daily-close", methods=["GET"])

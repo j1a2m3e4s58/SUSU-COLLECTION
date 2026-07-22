@@ -354,6 +354,20 @@ export async function removeTestCustomers() {
   });
 }
 
+export async function seedTestStaff() {
+  return apiRequest("/maintenance/seed-test-staff", {
+    method: "POST",
+    body: {},
+  });
+}
+
+export async function removeTestStaff() {
+  return apiRequest("/maintenance/remove-test-staff", {
+    method: "POST",
+    body: {},
+  });
+}
+
 export async function getDailyCloseStatus(date, agentId) {
   const params = new URLSearchParams();
   if (date) params.set("date", date);

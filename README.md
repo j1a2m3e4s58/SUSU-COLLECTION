@@ -41,6 +41,21 @@ npm run dev
 
 The Vite proxy targets `http://127.0.0.1:4190` by default. To use another local backend port, set `VITE_DEV_API_TARGET` before running Vite.
 
+## Test Staff
+
+In Test Mode, the Owner can use **Portal Control > Load Test Staff** to create any missing sample accounts. Newly created accounts use `PORTAL_DEFAULT_INITIAL_PASSWORD`; existing accounts and passwords are never changed.
+
+- `lawuah@bawjiasecommunitybank.com`
+- `dquarshie@bawjiasecommunitybank.com`
+- `jbruku@bawjiasecommunitybank.com`
+- `kasare@bawjiasecommunitybank.com`
+- `kyeenu-prah@bawjiasecommunitybank.com`
+- `amensah@bawjiasecommunitybank.com`
+- `nnarh@bawjiasecommunitybank.com`
+- `gowusu@bawjiasecommunitybank.com`
+
+Use **Remove Test Staff** before switching to Live Mode. The cleanup removes only accounts created by this test-data action.
+
 ## Checks
 
 Run these before committing:

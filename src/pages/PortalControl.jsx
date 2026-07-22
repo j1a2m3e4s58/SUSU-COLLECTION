@@ -22,11 +22,13 @@ import {
   importBackup,
   normalizeLegacySusuDepartments,
   removeTestCustomers,
+  removeTestStaff,
   seedTestCustomers,
+  seedTestStaff,
   updatePortalSettings,
 } from "@/api/portalClient";
 import { useAuth } from "@/lib/AuthContext";
-import { Building2, Download, ListPlus, Pencil, Plus, RotateCcw, Save, Settings2, Trash2, Upload, X } from "lucide-react";
+import { Building2, Download, ListPlus, Pencil, Plus, RotateCcw, Save, Settings2, Trash2, Upload, UserMinus, UserPlus, X } from "lucide-react";
 
 const listControls = [
   ["branches", "Branches", "Branch", "Add branch name", []],
@@ -298,6 +300,8 @@ export default function PortalControl() {
   const [clearing, setClearing] = useState(false);
   const [seedingCustomers, setSeedingCustomers] = useState(false);
   const [removingTestCustomers, setRemovingTestCustomers] = useState(false);
+  const [seedingStaff, setSeedingStaff] = useState(false);
+  const [removingTestStaff, setRemovingTestStaff] = useState(false);
   const [normalizingLegacy, setNormalizingLegacy] = useState(false);
   const [clearBackupReady, setClearBackupReady] = useState(false);
   const [error, setError] = useState("");
@@ -538,6 +542,47 @@ export default function PortalControl() {
     }
   };
 
+  const loadTestStaff = async () => {
+    if (draft.appMode !== "test") {
+      setError("Switch to Test Mode and save before loading test staff.");
+      return;
+    }
+    setSeedingStaff(true);
+    setError("");
+    setSuccess("");
+    try {
+      const result = await seedTestStaff();
+      const emails = (result.users || []).map((item) => item.email).filter(Boolean);
+      setSuccess(
+        emails.length
+          ? `Loaded ${emails.length} test staff account(s): ${emails.join(", ")}. They use the configured initial test password.`
+          : "All test staff accounts already exist. Existing passwords were not changed."
+      );
+    } catch (err) {
+      setError(err.message || "Could not load test staff.");
+    } finally {
+      setSeedingStaff(false);
+    }
+  };
+
+  const clearOnlyTestStaff = async () => {
+    if (draft.appMode !== "test") {
+      setError("Switch to Test Mode before removing test staff.");
+      return;
+    }
+    setRemovingTestStaff(true);
+    setError("");
+    setSuccess("");
+    try {
+      const result = await removeTestStaff();
+      setSuccess(`Removed ${result.removedCount || 0} test staff account(s). Existing real staff were left untouched.`);
+    } catch (err) {
+      setError(err.message || "Could not remove test staff.");
+    } finally {
+      setRemovingTestStaff(false);
+    }
+  };
+
   const normalizeLegacyData = async () => {
     if (!clearBackupReady) {
       setError("Export Backup before normalizing legacy SUSU data.");
@@ -620,7 +665,7 @@ export default function PortalControl() {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="font-heading text-base font-bold text-foreground">Production Checks</h2>
-              <p className="text-sm text-muted-foreground">Live Mode requires database storage, trusted URLs, mail, and portal password protection.</p>
+              <p className="text-sm text-muted-foreground">Live Mode requires database storage, trusted URLs, mail, and Owner verification.</p>
             </div>
             <Badge variant={productionStatus.liveReady ? "default" : "secondary"}>
               {productionStatus.liveReady ? "Live ready" : "Action needed"}
@@ -682,6 +727,14 @@ export default function PortalControl() {
             <Button type="button" variant="outline" className="gap-2 bg-background/70 text-destructive hover:text-destructive" onClick={clearOnlyTestCustomers} disabled={removingTestCustomers || draft.appMode !== "test"}>
               <X className="h-4 w-4" />
               {removingTestCustomers ? "Removing..." : "Remove Test Customers"}
+            </Button>
+            <Button type="button" variant="outline" className="gap-2 bg-background/70" onClick={loadTestStaff} disabled={seedingStaff || draft.appMode !== "test"}>
+              <UserPlus className="h-4 w-4" />
+              {seedingStaff ? "Loading..." : "Load Test Staff"}
+            </Button>
+            <Button type="button" variant="outline" className="gap-2 bg-background/70 text-destructive hover:text-destructive" onClick={clearOnlyTestStaff} disabled={removingTestStaff || draft.appMode !== "test"}>
+              <UserMinus className="h-4 w-4" />
+              {removingTestStaff ? "Removing..." : "Remove Test Staff"}
             </Button>
             <Button type="button" variant="outline" className="gap-2 bg-background/70" onClick={normalizeLegacyData} disabled={normalizingLegacy || !clearBackupReady}>
               <RotateCcw className="h-4 w-4" />

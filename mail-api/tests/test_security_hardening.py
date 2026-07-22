@@ -625,10 +625,45 @@ def test_owner_can_reset_directory_email_login_and_revoke_sessions(monkeypatch, 
     assert app_module.load_audit_logs_store()[0]["action"] == "RESET_STAFF_EMAIL_LOGIN"
 
 
+def test_owner_can_load_and_remove_only_marked_test_staff(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    real_staff = {
+        "id": "real-staff",
+        "fullname": "Existing Real Staff",
+        "phone": "0240000099",
+        "email": "existing.real@bawjiasecommunitybank.com",
+        "role": "GeneralStaff",
+        "department": "SUSU",
+        "branch": "BAWJIASE",
+        "isActive": True,
+        "isVerified": True,
+    }
+    owner, _ = save_test_users(app_module, real_staff)
+    client = app_module.app.test_client()
+    headers = auth_headers(app_module, owner["id"])
+
+    seeded = client.post("/api/maintenance/seed-test-staff", json={}, headers=headers)
+    assert seeded.status_code == 200
+    created_emails = {item["email"] for item in seeded.get_json()["users"]}
+    assert "lawuah@bawjiasecommunitybank.com" in created_emails
+    lawuah = next(item for item in app_module.load_user_store() if item["email"] == "lawuah@bawjiasecommunitybank.com")
+    assert lawuah["isTestData"] is True
+    passwords = app_module.load_password_store()
+    assert app_module.verify_password(passwords[lawuah["email"]], "SeedPass123!")
+
+    removed = client.post("/api/maintenance/remove-test-staff", json={}, headers=headers)
+    assert removed.status_code == 200
+    remaining_emails = {item["email"] for item in app_module.load_user_store()}
+    assert "lawuah@bawjiasecommunitybank.com" not in remaining_emails
+    assert real_staff["email"] in remaining_emails
+
+
 @pytest.mark.parametrize("path", [
     "/api/maintenance/clear-test-data",
     "/api/maintenance/remove-test-customers",
     "/api/maintenance/seed-test-customers",
+    "/api/maintenance/remove-test-staff",
+    "/api/maintenance/seed-test-staff",
 ])
 def test_live_mode_blocks_test_data_routes(monkeypatch, tmp_path, path):
     app_module = load_app(monkeypatch, tmp_path)
