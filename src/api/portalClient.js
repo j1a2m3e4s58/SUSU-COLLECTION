@@ -92,6 +92,10 @@ export async function getPortalSettings() {
   return data.settings;
 }
 
+export async function getHealthStatus() {
+  return apiRequest("/health");
+}
+
 export async function updatePortalSettings(settings, portalAuthorization = getStoredPortalAuthorization()) {
   const data = await apiRequest("/portal-settings", {
     method: "POST",
@@ -114,6 +118,13 @@ export async function unlockPortalControl(password) {
   return apiRequest("/portal-settings/unlock", {
     method: "POST",
     body: { password },
+  });
+}
+
+export async function verifyPortalControlUnlock(challengeId, code) {
+  return apiRequest("/portal-settings/unlock/verify", {
+    method: "POST",
+    body: { challengeId, code },
   });
 }
 
@@ -159,6 +170,14 @@ export async function updateStaff(userId, payload) {
 
 export async function createAgentAccount(payload) {
   const data = await apiRequest("/agents/create", {
+    method: "POST",
+    body: payload,
+  });
+  return normalizeUser(data.user);
+}
+
+export async function createSupervisorAccount(payload) {
+  const data = await apiRequest("/supervisors/create", {
     method: "POST",
     body: payload,
   });

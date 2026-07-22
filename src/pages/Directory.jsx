@@ -16,7 +16,6 @@ import ConfirmActionDialog from "@/components/ui/confirm-action-dialog";
 import ControlledSelect from "@/components/ui/controlled-select";
 import {
   archiveStaff,
-  createAgentAccount,
   deleteStaff,
   exportBackup,
   getActiveStaff,
@@ -26,7 +25,7 @@ import {
   updateStaff,
 } from "@/api/portalClient";
 import { useAuth } from "@/lib/AuthContext";
-import { Archive, Building2, KeyRound, Loader2, Mail, MapPin, Phone, Search, ShieldCheck, Trash2, UserPlus, UserX, Users } from "lucide-react";
+import { Archive, Building2, KeyRound, Loader2, Mail, MapPin, Phone, Search, ShieldCheck, Trash2, UserX, Users } from "lucide-react";
 
 function initials(name) {
   return String(name || "User")
@@ -171,18 +170,9 @@ export default function Directory() {
   const [confirmAction, setConfirmAction] = useState(null);
   const [removeBackupReady, setRemoveBackupReady] = useState(false);
   const [exportingBackup, setExportingBackup] = useState(false);
-  const [showAddAgent, setShowAddAgent] = useState(false);
   const [resetTarget, setResetTarget] = useState(null);
   const [resetPassword, setResetPassword] = useState("");
   const [resettingLogin, setResettingLogin] = useState(false);
-  const [addingAgent, setAddingAgent] = useState(false);
-  const [agentForm, setAgentForm] = useState({
-    fullname: "",
-    username: "",
-    temporaryPassword: "",
-    phone: "",
-    branch: "",
-  });
 
   useEffect(() => {
     let mounted = true;
@@ -235,9 +225,6 @@ export default function Directory() {
   const managedBranches = Array.isArray(user?.managedBranches) && user.managedBranches.length
     ? user.managedBranches
     : [user?.branch].filter(Boolean);
-  const scopedBranchOptions = branches.filter((item) => managedBranches.includes(item));
-  const addAgentBranches = canOwnerControl ? branches : (scopedBranchOptions.length ? scopedBranchOptions : managedBranches);
-  const canAddAgentUser = canOwnerControl || (user?.role === "Supervisor" && addAgentBranches.length > 0);
   const canManageMember = (member) => {
     if (!member || member.id === user?.id || ["OwnerAdmin", "SuperAdmin"].includes(member.role)) return false;
     if (canOwnerControl) return true;
@@ -328,33 +315,6 @@ export default function Directory() {
     }
   };
 
-  const handleAddAgent = async () => {
-    if (!agentForm.username || !agentForm.temporaryPassword || !agentForm.phone || !agentForm.branch) {
-      setError("Enter username, temporary password, phone, and branch.");
-      return;
-    }
-    setAddingAgent(true);
-    setError("");
-    setSuccess("");
-    try {
-      const created = await createAgentAccount(agentForm);
-      setStaff((current) => [created, ...current.filter((member) => member.id !== created.id)]);
-      setSuccess(`${created.fullname || created.loginUsername || "Agent"} has been added.`);
-      setShowAddAgent(false);
-      setAgentForm({
-        fullname: "",
-        username: "",
-        temporaryPassword: "",
-        phone: "",
-        branch: addAgentBranches[0] || "",
-      });
-    } catch (err) {
-      setError(err.message || "Could not add this agent.");
-    } finally {
-      setAddingAgent(false);
-    }
-  };
-
   const handleResetEmailLogin = async () => {
     if (!resetTarget) return;
     if (resetPassword.length < 8) {
@@ -391,7 +351,7 @@ export default function Directory() {
             See active staff, branch coverage, and who is online now.
           </p>
         </div>
-        {(canOwnerControl || canAddAgentUser) && (
+        {canOwnerControl && (
           <div className="flex flex-wrap gap-2">
             {canOwnerControl && (
               <Link to="/past-staff">
@@ -408,21 +368,6 @@ export default function Directory() {
                   Supervisor Management
                 </Button>
               </Link>
-            )}
-            {canAddAgentUser && (
-              <Button
-                type="button"
-                variant="outline"
-                className="gap-2"
-                onClick={() => {
-                  setAgentForm((current) => ({ ...current, branch: current.branch || addAgentBranches[0] || "" }));
-                  setError("");
-                  setShowAddAgent(true);
-                }}
-              >
-                <UserPlus className="h-4 w-4" />
-                Add Agent
-              </Button>
             )}
           </div>
         )}
@@ -700,87 +645,6 @@ export default function Directory() {
             <Button type="button" variant="outline" onClick={() => setResetTarget(null)}>Cancel</Button>
             <Button type="button" onClick={handleResetEmailLogin} disabled={resettingLogin || resetPassword.length < 8}>
               {resettingLogin ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Resetting...</> : "Reset Login"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={showAddAgent} onOpenChange={setShowAddAgent}>
-        <DialogContent className="w-[calc(100vw-2rem)] max-w-md rounded-xl p-5 sm:p-6">
-          <DialogHeader>
-            <DialogTitle>Add Agent User</DialogTitle>
-            <DialogDescription>
-              Create a username and temporary password for a SUSU agent.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="agent-fullname">Full Name</Label>
-              <Input
-                id="agent-fullname"
-                value={agentForm.fullname}
-                onChange={(event) => setAgentForm({ ...agentForm, fullname: event.target.value })}
-                placeholder="e.g. Gabriel Owusu"
-              />
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="agent-username">Username</Label>
-                <Input
-                  id="agent-username"
-                  value={agentForm.username}
-                  onChange={(event) => setAgentForm({ ...agentForm, username: event.target.value })}
-                  placeholder="e.g. gabriel01"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="agent-phone">Phone</Label>
-                <Input
-                  id="agent-phone"
-                  value={agentForm.phone}
-                  onChange={(event) => setAgentForm({ ...agentForm, phone: event.target.value })}
-                  placeholder="024..."
-                />
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="agent-temp-password">Temporary Password</Label>
-              <Input
-                id="agent-temp-password"
-                value={agentForm.temporaryPassword}
-                onChange={(event) => setAgentForm({ ...agentForm, temporaryPassword: event.target.value })}
-                placeholder="Temporary password"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="agent-branch">Branch</Label>
-              <ControlledSelect
-                value={agentForm.branch}
-                onChange={(value) => setAgentForm({ ...agentForm, branch: value })}
-                options={addAgentBranches}
-                placeholder="Select branch"
-                className="h-10 rounded-lg border-border bg-background text-sm"
-              />
-            </div>
-            <div className="rounded-lg border border-primary/20 bg-primary/10 p-3 text-xs text-muted-foreground">
-              First login will ask for this phone number, then generate a one-time setup token before a permanent password.
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setShowAddAgent(false)}>
-              Cancel
-            </Button>
-            <Button type="button" onClick={handleAddAgent} disabled={addingAgent}>
-              {addingAgent ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Adding...
-                </>
-              ) : (
-                "Add Agent"
-              )}
             </Button>
           </DialogFooter>
         </DialogContent>

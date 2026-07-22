@@ -10,7 +10,7 @@ import pytest
 def load_app(monkeypatch, tmp_path):
     monkeypatch.setenv("PORTAL_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("PORTAL_PUBLIC_URL", "https://portal.example.test")
-    monkeypatch.setenv("PORTAL_CONTROL_PASSWORD", "SecretPortalPassword123")
+    monkeypatch.setenv("PORTAL_DEFAULT_INITIAL_PASSWORD", "SeedPass123!")
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
     sys.modules.pop("app", None)
     return importlib.import_module("app")
@@ -172,9 +172,17 @@ def auth_headers(app_module, user_id):
 
 
 def unlock_portal_control(client, headers):
-    response = client.post(
+    challenge_response = client.post(
         "/api/portal-settings/unlock",
-        json={"password": "SecretPortalPassword123"},
+        json={"password": "SeedPass123!"},
+        headers=headers,
+    )
+    assert challenge_response.status_code == 200
+    challenge = challenge_response.get_json()
+    assert challenge["requiresMfa"] is True
+    response = client.post(
+        "/api/portal-settings/unlock/verify",
+        json={"challengeId": challenge["challengeId"], "code": challenge["testCode"]},
         headers=headers,
     )
     assert response.status_code == 200
@@ -186,6 +194,52 @@ def save_test_users(app_module, *users):
     normalized = [owner, *[app_module.normalize_user(user) for user in users]]
     app_module.save_user_store(normalized)
     return normalized
+
+
+def test_only_owner_can_create_supervisors(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    owner = app_module.load_user_store()[0]
+    existing_supervisor = {
+        "id": "existing-supervisor",
+        "fullname": "Existing Supervisor",
+        "phone": "0240000010",
+        "email": "existing.supervisor@bawjiasecommunitybank.com",
+        "role": "Supervisor",
+        "department": "SUSU",
+        "branch": "BAWJIASE",
+        "managedBranches": ["BAWJIASE"],
+        "isActive": True,
+        "isVerified": True,
+    }
+    save_test_users(app_module, existing_supervisor)
+    client = app_module.app.test_client()
+    payload = {
+        "fullname": "New Branch Supervisor",
+        "email": "new.supervisor@bawjiasecommunitybank.com",
+        "phone": "0240000011",
+        "branch": "OFAAKOR",
+        "temporaryPassword": "Temporary123!",
+    }
+
+    denied = client.post(
+        "/api/supervisors/create",
+        json=payload,
+        headers=auth_headers(app_module, existing_supervisor["id"]),
+    )
+    assert denied.status_code == 403
+
+    created = client.post(
+        "/api/supervisors/create",
+        json=payload,
+        headers=auth_headers(app_module, owner["id"]),
+    )
+    assert created.status_code == 200
+    user = created.get_json()["user"]
+    assert user["role"] == "Supervisor"
+    assert user["department"] == "SUSU"
+    assert user["managedBranches"] == ["OFAAKOR"]
+    passwords = app_module.load_password_store()
+    assert app_module.verify_password(passwords[user["email"]], "Temporary123!")
 
 
 def test_owner_cleanup_permanently_normalizes_legacy_susu_departments(monkeypatch, tmp_path):
@@ -243,16 +297,41 @@ def test_portal_branch_removal_requires_backup(monkeypatch, tmp_path):
     assert "Export a backup" in response.get_json()["error"]
 
 
-def test_portal_control_password_is_case_sensitive(monkeypatch, tmp_path):
+def test_portal_control_requires_owner_password_and_mfa(monkeypatch, tmp_path):
     app_module = load_app(monkeypatch, tmp_path)
     owner = app_module.load_user_store()[0]
     client = app_module.app.test_client()
-    response = client.post(
+    headers = auth_headers(app_module, owner["id"])
+    denied = client.post(
         "/api/portal-settings/unlock",
-        json={"password": "secretportalpassword123"},
-        headers=auth_headers(app_module, owner["id"]),
+        json={"password": "seedpass123!"},
+        headers=headers,
     )
-    assert response.status_code == 403
+    assert denied.status_code == 401
+
+    challenge_response = client.post(
+        "/api/portal-settings/unlock",
+        json={"password": "SeedPass123!"},
+        headers=headers,
+    )
+    assert challenge_response.status_code == 200
+    challenge = challenge_response.get_json()
+    assert challenge["requiresMfa"] is True
+
+    wrong_code = client.post(
+        "/api/portal-settings/unlock/verify",
+        json={"challengeId": challenge["challengeId"], "code": "000000"},
+        headers=headers,
+    )
+    assert wrong_code.status_code == 400
+
+    verified = client.post(
+        "/api/portal-settings/unlock/verify",
+        json={"challengeId": challenge["challengeId"], "code": challenge["testCode"]},
+        headers=headers,
+    )
+    assert verified.status_code == 200
+    assert verified.get_json()["authorizationToken"]
 
 
 def test_supervisor_is_limited_to_agents_in_managed_branch(monkeypatch, tmp_path):
@@ -742,7 +821,20 @@ def test_trusted_privileged_login_is_browser_bound_and_revocable(monkeypatch, tm
     )
     assert other_browser.get_json()["requiresMfa"] is True
 
-    app_module.revoke_user_sessions(owner["id"])
+    forgotten = client.post("/api/auth/trusted-device/forget", headers=browser_headers)
+    assert forgotten.status_code == 200
+    assert forgotten.get_json()["removed"] is True
+    forgotten_login = client.post("/api/auth/login", json=login_payload, headers=browser_headers)
+    assert forgotten_login.get_json()["requiresMfa"] is True
+
+    challenge = forgotten_login.get_json()
+    client.post(
+        "/api/auth/privileged-mfa/verify",
+        json={"challengeId": challenge["challengeId"], "code": challenge["testCode"], "trustDevice": True},
+        headers=browser_headers,
+    )
+    revoked = client.post("/api/auth/sessions/revoke-all", headers=browser_headers)
+    assert revoked.status_code == 200
     revoked_login = client.post("/api/auth/login", json=login_payload, headers=browser_headers)
     assert revoked_login.get_json()["requiresMfa"] is True
 

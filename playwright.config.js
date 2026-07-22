@@ -2,12 +2,13 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
-  timeout: 30_000,
+  timeout: 45_000,
   expect: { timeout: 8_000 },
   fullyParallel: false,
+  workers: 1,
   reporter: [["list"], ["html", { open: "never" }]],
   use: {
-    baseURL: "http://127.0.0.1:4173",
+    baseURL: "http://127.0.0.1:4187",
     launchOptions: {
       executablePath: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
     },
@@ -15,9 +16,9 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   webServer: {
-    command: "npm run dev -- --host 127.0.0.1 --port 4173",
-    url: "http://127.0.0.1:4173/login",
-    reuseExistingServer: true,
+    command: "npm run dev -- --host 127.0.0.1 --port 4187 --strictPort",
+    url: "http://127.0.0.1:4187/login",
+    reuseExistingServer: false,
     timeout: 120_000,
   },
   projects: [

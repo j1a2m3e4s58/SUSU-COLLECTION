@@ -23,8 +23,6 @@ services:
         value: /api
       - key: PORTAL_PUBLIC_URL
         sync: false
-      - key: PORTAL_CONTROL_PASSWORD
-        sync: false
       - key: ALLOWED_ORIGINS
         sync: false
       - key: TRUST_PROXY_HEADERS

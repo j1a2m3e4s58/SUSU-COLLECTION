@@ -34,6 +34,7 @@ import PastStaff from '@/pages/PastStaff';
 import InactiveCustomers from '@/pages/InactiveCustomers';
 import { canManageCustomers, isOwnerAdmin, isSusuAgent } from '@/lib/roles';
 import SensitiveReauthDialog from '@/components/SensitiveReauthDialog';
+import AppErrorBoundary from '@/components/AppErrorBoundary';
 
 const RequireAdmin = ({ children }) => {
   const { user } = useAuth();
@@ -125,18 +126,20 @@ function App() {
   }, []);
 
   return (
-    <AuthProvider>
-      <ThemeProvider>
-        <QueryClientProvider client={queryClientInstance}>
-          <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-            <ScrollToTop />
-            <AuthenticatedApp />
-            <SensitiveReauthDialog />
-          </Router>
-          <Toaster />
-        </QueryClientProvider>
-      </ThemeProvider>
-    </AuthProvider>
+    <AppErrorBoundary>
+      <AuthProvider>
+        <ThemeProvider>
+          <QueryClientProvider client={queryClientInstance}>
+            <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+              <ScrollToTop />
+              <AuthenticatedApp />
+              <SensitiveReauthDialog />
+            </Router>
+            <Toaster />
+          </QueryClientProvider>
+        </ThemeProvider>
+      </AuthProvider>
+    </AppErrorBoundary>
   )
 }
 

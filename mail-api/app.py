@@ -57,7 +57,6 @@ ONLINE_WINDOW_SECONDS = 20
 RESET_TOKEN_TTL_SECONDS = 30 * 60
 VERIFICATION_TTL_SECONDS = 15 * 60
 SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
-PORTAL_CONTROL_PASSWORD = str(os.getenv("PORTAL_CONTROL_PASSWORD", "") or "").strip()
 RATE_LIMIT_WINDOW_SECONDS = 15 * 60
 RATE_LIMIT_MAX_ATTEMPTS = 8
 DEFAULT_PORTAL_BRANCHES = [
@@ -89,7 +88,6 @@ DEFAULT_PORTAL_SETTINGS = {
     "authorizedAccessText": "Authorized Access Only",
     "appMode": "test",
     "publicRegistrationEnabled": False,
-    "portalControlPassword": PORTAL_CONTROL_PASSWORD,
     "itAccessCode": "",
     "hrAccessCode": "",
     "sessionMinutes": 30,
@@ -1657,7 +1655,6 @@ def load_portal_settings_store() -> dict:
         "loginSubtitle": str(raw.get("loginSubtitle") or DEFAULT_PORTAL_SETTINGS["loginSubtitle"]),
         "loginButtonText": str(raw.get("loginButtonText") or DEFAULT_PORTAL_SETTINGS["loginButtonText"]),
         "authorizedAccessText": str(raw.get("authorizedAccessText") or DEFAULT_PORTAL_SETTINGS["authorizedAccessText"]),
-        "portalControlPassword": str(raw.get("portalControlPassword") or DEFAULT_PORTAL_SETTINGS["portalControlPassword"]),
         "itAccessCode": str(raw.get("itAccessCode") or DEFAULT_PORTAL_SETTINGS["itAccessCode"]),
         "hrAccessCode": str(raw.get("hrAccessCode") or DEFAULT_PORTAL_SETTINGS["hrAccessCode"]),
         "sessionMinutes": min(60, normalize_positive_number(raw.get("sessionMinutes"), DEFAULT_PORTAL_SETTINGS["sessionMinutes"])),
@@ -1690,16 +1687,6 @@ def public_portal_settings(settings: dict | None = None) -> dict:
     data.pop("itAccessCode", None)
     data.pop("hrAccessCode", None)
     return data
-
-
-def configured_portal_control_password() -> str:
-    return PORTAL_CONTROL_PASSWORD
-
-
-def portal_control_password_matches(candidate: object, expected: str | None = None) -> bool:
-    configured = str(expected if expected is not None else configured_portal_control_password())
-    supplied = str(candidate or "")
-    return bool(configured) and hmac.compare_digest(supplied, configured)
 
 
 def load_portal_authorizations() -> dict[str, dict]:
@@ -2028,6 +2015,17 @@ def revoke_user_trusted_devices(user_id: str) -> None:
         save_trusted_devices(filtered)
 
 
+def revoke_current_trusted_device() -> bool:
+    token = str(request.cookies.get(TRUSTED_DEVICE_COOKIE_NAME, "") or "").strip()
+    if not token:
+        return False
+    devices = load_trusted_devices()
+    removed = devices.pop(session_token_hash(token), None) is not None
+    if removed:
+        save_trusted_devices(devices)
+    return removed
+
+
 def load_sessions() -> dict[str, dict]:
     raw = read_json_file(SESSIONS_STORE_PATH, {})
     if not isinstance(raw, dict):
@@ -2343,7 +2341,7 @@ def privileged_mfa_code_hash(challenge_id: str, code: str) -> str:
     return hashlib.sha256(f"{challenge_id}:{code}".encode("utf-8")).hexdigest()
 
 
-def issue_privileged_mfa_challenge(user: dict) -> dict:
+def issue_privileged_mfa_challenge(user: dict, purpose: str = "login") -> dict:
     challenge_id = secrets.token_urlsafe(24)
     code = generate_verification_code()
     expires_at = now_seconds() + 10 * 60
@@ -2353,22 +2351,23 @@ def issue_privileged_mfa_challenge(user: dict) -> dict:
         "codeHash": privileged_mfa_code_hash(challenge_id, code),
         "expiresAt": expires_at,
         "attempts": 0,
+        "purpose": purpose,
     }
     atomic_write_json(PRIVILEGED_MFA_PATH, challenges)
     text_body = (
-        f"Your BCB SUSU privileged login verification code is {code}.\n\n"
-        "It expires in 10 minutes. If you did not attempt to sign in, contact the system owner immediately."
+        f"Your BCB SUSU security verification code is {code}.\n\n"
+        "It expires in 10 minutes. If you did not request this code, contact the system owner immediately."
     )
     html_body = (
         "<div style='font-family:Arial,sans-serif;max-width:560px;margin:auto;padding:24px'>"
-        "<h2 style='color:#047857'>Privileged login verification</h2>"
+        "<h2 style='color:#047857'>Security verification</h2>"
         f"<p>Your verification code is:</p><p style='font-size:28px;font-weight:700;letter-spacing:6px'>{code}</p>"
         "<p>This code expires in 10 minutes.</p></div>"
     )
     is_test_mode = str(load_portal_settings_store().get("appMode", "test")).strip().lower() != "live"
     if not is_test_mode:
         try:
-            send_mail(user["email"], "BCB SUSU privileged login verification", text_body, html_body)
+            send_mail(user["email"], "BCB SUSU security verification", text_body, html_body)
         except Exception:
             challenges.pop(challenge_id, None)
             atomic_write_json(PRIVILEGED_MFA_PATH, challenges)
@@ -2700,10 +2699,6 @@ def production_status():
             "ok": bool(portal_public_url()),
             "label": "PORTAL_PUBLIC_URL configured",
         },
-        "portalControlPassword": {
-            "ok": bool(configured_portal_control_password()),
-            "label": "PORTAL_CONTROL_PASSWORD configured",
-        },
         "mail": {
             "ok": all(env_secret(name) for name in ["MAIL_SERVER", "MAIL_USERNAME", "MAIL_PASSWORD", "MAIL_DEFAULT_SENDER"]),
             "label": "Mail server configured",
@@ -2713,7 +2708,7 @@ def production_status():
             "label": "SMS webhook configured",
         },
     }
-    required = ["database", "portalPublicUrl", "portalControlPassword", "mail"]
+    required = ["database", "portalPublicUrl", "mail"]
     live_ready = all(checks[key]["ok"] for key in required)
     return jsonify({
         "storageBackend": "postgres" if pg_enabled() else "json-file",
@@ -3021,13 +3016,56 @@ def unlock_portal_settings():
     if error:
         return error
     password = str(data.get("password", "") or "")
-    expected_password = configured_portal_control_password()
-    if not expected_password:
-        return jsonify({"error": "PORTAL_CONTROL_PASSWORD is not configured on the server."}), 500
-    if not portal_control_password_matches(password, expected_password):
+    passwords = load_password_store()
+    stored_password = passwords.get(str(auth_user.get("email", "") or "").strip().lower())
+    if not stored_password or not verify_password(stored_password, password):
         record_audit_log(auth_user, "PORTAL_CONTROL_UNLOCK_FAILED", {"reason": "invalid_password"})
-        return jsonify({"error": "Portal control password is incorrect"}), 403
-    record_audit_log(auth_user, "PORTAL_CONTROL_UNLOCKED", {"ok": True})
+        return jsonify({"error": "Your account password is incorrect."}), 401
+    try:
+        challenge = issue_privileged_mfa_challenge(auth_user, purpose="portal-control")
+    except Exception as exc:
+        app.logger.error("Portal Control MFA delivery failed for %s: %s", auth_user.get("email"), exc)
+        return jsonify({"error": "The verification code could not be delivered. Try again shortly."}), 503
+    record_audit_log(auth_user, "PORTAL_CONTROL_MFA_REQUIRED", {"ok": True})
+    return jsonify({"ok": True, "requiresMfa": True, **challenge})
+
+
+@app.route("/api/portal-settings/unlock/verify", methods=["POST", "OPTIONS"])
+def verify_portal_settings_unlock():
+    preflight = handle_options()
+    if preflight:
+        return preflight
+    session_token, auth_user, error = require_owner_admin()
+    if error:
+        return error
+    data, error = require_json()
+    if error:
+        return error
+    challenge_id = str(data.get("challengeId", "") or "").strip()
+    code = "".join(ch for ch in str(data.get("code", "") or "") if ch.isdigit())
+    limit_key = rate_limit_key("portal-control-mfa", challenge_id)
+    if auth_rate_limited(limit_key):
+        return jsonify({"error": "Too many verification attempts. Start the unlock again."}), 429
+    challenges = load_privileged_mfa_challenges()
+    challenge = challenges.get(challenge_id)
+    valid = bool(
+        challenge
+        and str(challenge.get("userId", "")) == str(auth_user.get("id", ""))
+        and str(challenge.get("purpose", "login")) == "portal-control"
+        and len(code) == 6
+        and hmac.compare_digest(
+            str(challenge.get("codeHash", "")),
+            privileged_mfa_code_hash(challenge_id, code),
+        )
+    )
+    if not valid:
+        record_auth_failure(limit_key)
+        record_audit_log(auth_user, "PORTAL_CONTROL_MFA_FAILED", {"challengeId": challenge_id})
+        return jsonify({"error": "Invalid or expired verification code."}), 400
+    challenges.pop(challenge_id, None)
+    atomic_write_json(PRIVILEGED_MFA_PATH, challenges)
+    clear_auth_failures(limit_key)
+    record_audit_log(auth_user, "PORTAL_CONTROL_UNLOCKED", {"mfaVerified": True})
     authorization_token, expires_at = issue_portal_authorization(auth_user, session_token)
     return jsonify({"ok": True, "authorizationToken": authorization_token, "expiresAt": expires_at})
 
@@ -3091,7 +3129,6 @@ def update_portal_settings():
         "loginSubtitle": str(data.get("loginSubtitle") or DEFAULT_PORTAL_SETTINGS["loginSubtitle"]),
         "loginButtonText": str(data.get("loginButtonText") or DEFAULT_PORTAL_SETTINGS["loginButtonText"]),
         "authorizedAccessText": str(data.get("authorizedAccessText") or DEFAULT_PORTAL_SETTINGS["authorizedAccessText"]),
-        "portalControlPassword": "",
         "itAccessCode": str(data.get("itAccessCode") or ""),
         "hrAccessCode": str(data.get("hrAccessCode") or ""),
         "sessionMinutes": min(60, normalize_positive_number(data.get("sessionMinutes"), DEFAULT_PORTAL_SETTINGS["sessionMinutes"])),
@@ -3321,7 +3358,6 @@ def import_production_backup():
                 imported_settings.pop("itAccessCode", None)
                 imported_settings.pop("hrAccessCode", None)
                 imported_settings["departments"] = normalize_portal_departments(imported_settings.get("departments"))
-                imported_settings["portalControlPassword"] = ""
                 imported_settings["itAccessCode"] = ""
                 imported_settings["hrAccessCode"] = ""
                 save_portal_settings_store(imported_settings)
@@ -4814,6 +4850,71 @@ def reset_agent_password(user_id: str):
     return jsonify({"ok": True, "user": user})
 
 
+@app.route("/api/supervisors/create", methods=["POST", "OPTIONS"])
+def create_supervisor_account():
+    preflight = handle_options()
+    if preflight:
+        return preflight
+    _, auth_user, error = require_owner_admin()
+    if error:
+        return error
+    data, error = require_json()
+    if error:
+        return error
+    try:
+        fullname = str(data.get("fullname") or "").strip()
+        email = validate_email(str(data.get("email") or ""))
+        phone = normalize_phone(data.get("phone"))
+        branch = managed_branch_for_user(auth_user, data.get("branch"))
+        temporary_password = str(data.get("temporaryPassword") or "")
+        if len(fullname) < 2:
+            raise ValueError("Enter the supervisor's full name.")
+        if len(temporary_password) < 8:
+            raise ValueError("Temporary password must be at least 8 characters.")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    users = load_user_store()
+    if find_user_by_email(users, email):
+        return jsonify({"error": "That official email already belongs to a staff account."}), 400
+
+    supervisor = normalize_user({
+        "id": f"supervisor-{now_ms()}-{secrets.token_hex(3)}",
+        "fullname": fullname,
+        "phone": phone,
+        "email": email,
+        "role": "Supervisor",
+        "position": "SUSU Supervisor",
+        "department": "SUSU",
+        "branch": branch,
+        "managedBranches": [branch],
+        "managedDepartmentsByBranch": {},
+        "permissions": {
+            "customers": True,
+            "transactions": True,
+            "reports": True,
+            "agents": True,
+            "branches": True,
+            "auditLog": False,
+            "backupExport": True,
+            "userManagement": False,
+        },
+        "imageFile": None,
+        "isActive": True,
+        "isVerified": True,
+        "lastSeen": 0,
+        "registrationTime": now_ms(),
+        "isArchived": False,
+    })
+    users.append(supervisor)
+    passwords = load_password_store()
+    passwords[email] = hash_password_for_storage(temporary_password)
+    save_user_store(users)
+    save_password_store(passwords)
+    record_audit_log(auth_user, "CREATE_SUPERVISOR_ACCOUNT", staff_audit_target(supervisor))
+    return jsonify({"ok": True, "user": supervisor})
+
+
 @app.route("/api/staff/<user_id>/reset-email-login", methods=["POST", "OPTIONS"])
 def reset_staff_email_login(user_id: str):
     preflight = handle_options()
@@ -5092,7 +5193,7 @@ def auth_privileged_mfa_verify():
         return jsonify({"error": "Too many verification attempts. Sign in again to request a new code."}), 429
     challenges = load_privileged_mfa_challenges()
     challenge = challenges.get(challenge_id)
-    if not challenge or len(code) != 6 or not hmac.compare_digest(
+    if not challenge or str(challenge.get("purpose", "login")) != "login" or len(code) != 6 or not hmac.compare_digest(
         str(challenge.get("codeHash", "")), privileged_mfa_code_hash(challenge_id, code)
     ):
         record_auth_failure(limit_key)
@@ -5354,6 +5455,33 @@ def auth_logout():
     revoke_session(token)
     record_audit_log(auth_user, "LOGOUT", staff_audit_target(auth_user))
     return clear_session_cookie(jsonify({"ok": True}))
+
+
+@app.route("/api/auth/trusted-device/forget", methods=["POST", "OPTIONS"])
+def auth_forget_trusted_device():
+    preflight = handle_options()
+    if preflight:
+        return preflight
+    _, auth_user, error = require_authenticated_user()
+    if error:
+        return error
+    removed = revoke_current_trusted_device()
+    record_audit_log(auth_user, "FORGET_TRUSTED_DEVICE", {"removed": removed})
+    return clear_trusted_device_cookie(jsonify({"ok": True, "removed": removed}))
+
+
+@app.route("/api/auth/sessions/revoke-all", methods=["POST", "OPTIONS"])
+def auth_revoke_all_sessions():
+    preflight = handle_options()
+    if preflight:
+        return preflight
+    _, auth_user, error = require_authenticated_user()
+    if error:
+        return error
+    record_audit_log(auth_user, "REVOKE_ALL_SESSIONS", staff_audit_target(auth_user))
+    revoke_user_sessions(auth_user["id"])
+    response = clear_session_cookie(jsonify({"ok": True}))
+    return clear_trusted_device_cookie(response)
 
 
 @app.route("/api/auth/me", methods=["POST", "OPTIONS"])

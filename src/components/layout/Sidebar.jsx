@@ -16,7 +16,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { setStoredPortalAuthorization, unlockPortalControl } from '@/api/portalClient';
+import { setStoredPortalAuthorization, unlockPortalControl, verifyPortalControlUnlock } from '@/api/portalClient';
 import { canManageCustomers as canManageCustomerRecords, isOwnerAdmin, isSusuAgent as isAgentUser } from '@/lib/roles';
 
 export const navItems = [
@@ -34,13 +34,15 @@ export const navItems = [
   { label: 'Profile', path: '/profile', icon: UserCircle },
 ];
 
-export default function Sidebar({ isOpen, onClose, user, settings, collapsed = true, onToggleCollapsed }) {
+export default function Sidebar({ isOpen, onClose, user, settings, collapsed = true, onToggleCollapsed, connectionStatus = 'checking' }) {
   const location = useLocation();
   const navigate = useNavigate();
   const [unlockOpen, setUnlockOpen] = useState(false);
   const [password, setPassword] = useState("");
   const [unlockError, setUnlockError] = useState("");
   const [unlocking, setUnlocking] = useState(false);
+  const [unlockChallenge, setUnlockChallenge] = useState(null);
+  const [verificationCode, setVerificationCode] = useState("");
 
   const canManagePortal = isOwnerAdmin(user);
   const canOwnerControl = isOwnerAdmin(user);
@@ -50,6 +52,12 @@ export default function Sidebar({ isOpen, onClose, user, settings, collapsed = t
   const isSusuAgent = isAgentUser(user);
   const canManageCustomers = canManageCustomerRecords(user);
   const canManageAgents = canManageCustomers;
+  const connection = {
+    online: { label: 'System Online', dot: 'bg-emerald-500' },
+    reconnecting: { label: 'Reconnecting', dot: 'bg-amber-500 animate-pulse' },
+    offline: { label: 'System Offline', dot: 'bg-red-500' },
+    checking: { label: 'Checking System', dot: 'bg-slate-400 animate-pulse' },
+  }[connectionStatus] || { label: 'Checking System', dot: 'bg-slate-400 animate-pulse' };
 
   const labelFor = (item) => {
     if (item.path === '/') return settings?.dashboardLabel || item.label;
@@ -61,6 +69,8 @@ export default function Sidebar({ isOpen, onClose, user, settings, collapsed = t
     event.preventDefault();
     setPassword("");
     setUnlockError("");
+    setUnlockChallenge(null);
+    setVerificationCode("");
     setUnlockOpen(true);
   };
 
@@ -68,11 +78,17 @@ export default function Sidebar({ isOpen, onClose, user, settings, collapsed = t
     setUnlocking(true);
     setUnlockError("");
     try {
-      const result = await unlockPortalControl(password.trim());
-      setStoredPortalAuthorization(result.authorizationToken);
-      setUnlockOpen(false);
-      onClose?.();
-      navigate('/portal-control');
+      if (!unlockChallenge) {
+        const result = await unlockPortalControl(password);
+        setUnlockChallenge(result);
+        setVerificationCode(result.testCode || "");
+      } else {
+        const result = await verifyPortalControlUnlock(unlockChallenge.challengeId, verificationCode);
+        setStoredPortalAuthorization(result.authorizationToken);
+        setUnlockOpen(false);
+        onClose?.();
+        navigate('/portal-control');
+      }
     } catch (err) {
       setUnlockError(err.message || 'Portal control password is incorrect.');
     } finally {
@@ -146,27 +162,41 @@ export default function Sidebar({ isOpen, onClose, user, settings, collapsed = t
           })}
         </nav>
         <div className={`${collapsed ? 'lg:px-2' : ''} p-4 border-t border-sidebar-border`}>
-          <div className={`flex items-center gap-2 px-2 ${collapsed ? 'lg:justify-center lg:px-0' : ''}`} title="System Online">
-            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className={`text-xs text-muted-foreground ${collapsed ? 'lg:hidden' : ''}`}>System Online</span>
+          <div className={`flex items-center gap-2 px-2 ${collapsed ? 'lg:justify-center lg:px-0' : ''}`} title={connection.label} aria-live="polite">
+            <div className={`h-2 w-2 rounded-full ${connection.dot}`} />
+            <span className={`text-xs text-muted-foreground ${collapsed ? 'lg:hidden' : ''}`}>{connection.label}</span>
           </div>
         </div>
       </aside>
-      <Dialog open={unlockOpen} onOpenChange={setUnlockOpen}>
+      <Dialog open={unlockOpen} onOpenChange={(open) => {
+        setUnlockOpen(open);
+        if (!open) {
+          setUnlockChallenge(null);
+          setVerificationCode("");
+          setPassword("");
+          setUnlockError("");
+        }
+      }}>
         <DialogContent className="w-[calc(100vw-2rem)] max-w-[360px] rounded-xl p-5 sm:max-w-md sm:p-6">
           <DialogHeader>
-            <DialogTitle>Enter Portal Control Password</DialogTitle>
+            <DialogTitle>{unlockChallenge ? "Verify Portal Control Access" : "Confirm Your Identity"}</DialogTitle>
             <DialogDescription>
-              Unlock SUSU system settings before making system-wide changes.
+              {unlockChallenge
+                ? "Enter the six-digit code sent to your official email."
+                : "Enter your OwnerAdmin account password. A verification code will follow."}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
-            <Label htmlFor="portal-control-password">Password</Label>
+            <Label htmlFor="portal-control-password">{unlockChallenge ? "Verification Code" : "Account Password"}</Label>
             <Input
               id="portal-control-password"
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
+              type={unlockChallenge ? "text" : "password"}
+              inputMode={unlockChallenge ? "numeric" : undefined}
+              maxLength={unlockChallenge ? 6 : undefined}
+              value={unlockChallenge ? verificationCode : password}
+              onChange={(event) => unlockChallenge
+                ? setVerificationCode(event.target.value.replace(/\D/g, '').slice(0, 6))
+                : setPassword(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') handleUnlock();
               }}
@@ -178,8 +208,13 @@ export default function Sidebar({ isOpen, onClose, user, settings, collapsed = t
             <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={() => setUnlockOpen(false)}>
               Cancel
             </Button>
-            <Button type="button" className="w-full sm:w-auto" onClick={handleUnlock} disabled={unlocking || !password.trim()}>
-              {unlocking ? "Unlocking..." : "Unlock"}
+            <Button
+              type="button"
+              className="w-full sm:w-auto"
+              onClick={handleUnlock}
+              disabled={unlocking || (unlockChallenge ? verificationCode.length !== 6 : !password.trim())}
+            >
+              {unlocking ? "Checking..." : unlockChallenge ? "Verify and Unlock" : "Send Verification Code"}
             </Button>
           </DialogFooter>
         </DialogContent>

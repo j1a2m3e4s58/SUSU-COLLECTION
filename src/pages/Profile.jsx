@@ -6,6 +6,7 @@ import ControlledSelect from "@/components/ui/controlled-select";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/lib/AuthContext";
 import { useTheme } from "@/lib/ThemeContext";
+import { forgetTrustedDevice } from "@/api/authClient";
 import {
   getPortalSettings,
   getUserProfile,
@@ -27,6 +28,7 @@ import {
   Phone,
   Save,
   Shield,
+  ShieldOff,
   Sun,
   UserCircle,
   X,
@@ -76,7 +78,7 @@ function InfoRow({ icon, label, value }) {
 }
 
 export default function Profile() {
-  const { user, updateUser, logout } = useAuth();
+  const { user, updateUser, logout, signOutEverywhere } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
@@ -89,6 +91,7 @@ export default function Profile() {
   const [preview, setPreview] = useState("");
   const [photoFile, setPhotoFile] = useState(null);
   const [removePhoto, setRemovePhoto] = useState(false);
+  const [securityBusy, setSecurityBusy] = useState("");
   const [form, setForm] = useState({
     fullname: "",
     phone: "",
@@ -215,6 +218,31 @@ export default function Profile() {
   async function handleLogout() {
     await logout();
     navigate("/login", { replace: true });
+  }
+
+  async function handleForgetDevice() {
+    setSecurityBusy("device");
+    setError("");
+    try {
+      await forgetTrustedDevice();
+      setMessage("This browser is no longer trusted. Verification will be required at the next privileged login.");
+    } catch (err) {
+      setError(err.message || "Could not forget this device.");
+    } finally {
+      setSecurityBusy("");
+    }
+  }
+
+  async function handleSignOutEverywhere() {
+    setSecurityBusy("sessions");
+    setError("");
+    try {
+      await signOutEverywhere();
+      navigate("/login", { replace: true });
+    } catch (err) {
+      setError(err.message || "Could not sign out all devices.");
+      setSecurityBusy("");
+    }
   }
 
   if (!user) return null;
@@ -395,6 +423,23 @@ export default function Profile() {
               <InfoRow icon={<UserCircle className="h-4 w-4" />} label="Status" value={user.isVerified ? "Verified" : "Unverified"} />
             </div>
           </div>
+
+          {['OwnerAdmin', 'Supervisor'].includes(user.role) && (
+            <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+              <h3 className="font-heading text-lg font-bold text-foreground">Login Security</h3>
+              <p className="mt-1 text-sm text-muted-foreground">Control trusted browsers and active portal sessions.</p>
+              <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                <Button type="button" variant="outline" onClick={handleForgetDevice} disabled={Boolean(securityBusy)} className="gap-2">
+                  <ShieldOff className="h-4 w-4" />
+                  {securityBusy === 'device' ? 'Forgetting...' : 'Forget This Device'}
+                </Button>
+                <Button type="button" variant="destructive" onClick={handleSignOutEverywhere} disabled={Boolean(securityBusy)} className="gap-2">
+                  <LogOut className="h-4 w-4" />
+                  {securityBusy === 'sessions' ? 'Signing Out...' : 'Sign Out All Devices'}
+                </Button>
+              </div>
+            </div>
+          )}
 
           <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
             <div className="flex items-center justify-between gap-4">

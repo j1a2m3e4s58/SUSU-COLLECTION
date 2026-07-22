@@ -7,6 +7,7 @@ import {
   loginAgentWithUsername,
   loginWithEmail,
   logoutFromServer,
+  revokeAllSessions,
   storeAuthUser,
   verifyPrivilegedMfa,
 } from "@/api/authClient";
@@ -104,6 +105,13 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
   };
 
+  const signOutEverywhere = async () => {
+    await logoutPresence(user?.id).catch(() => {});
+    await revokeAllSessions();
+    clearStoredAuthUser();
+    setUser(null);
+  };
+
   const updateUser = (nextUser) => {
     const normalized = normalizeUser(nextUser);
     storeAuthUser(normalized);
@@ -126,6 +134,7 @@ export const AuthProvider = ({ children }) => {
       completeAgentFirstLogin,
       completePrivilegedLogin,
       logout,
+      signOutEverywhere,
       setUser,
       updateUser,
       checkUserAuth: async () => {},

@@ -5,12 +5,23 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import ControlledSelect from "@/components/ui/controlled-select";
 import { Input } from "@/components/ui/input";
-import { getActiveStaff, getPortalSettings, updateStaff } from "@/api/portalClient";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { createSupervisorAccount, getActiveStaff, getPortalSettings, updateStaff } from "@/api/portalClient";
 import { isSusuStaff } from "@/lib/roles";
 import {
   ArrowLeft,
   ArrowRightLeft,
   Check,
+  Loader2,
+  Plus,
   Search,
   ShieldCheck,
   UserX,
@@ -39,6 +50,15 @@ export default function SupervisorManagement() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [showCreateSupervisor, setShowCreateSupervisor] = useState(false);
+  const [creatingSupervisor, setCreatingSupervisor] = useState(false);
+  const [supervisorForm, setSupervisorForm] = useState({
+    fullname: "",
+    email: "",
+    phone: "",
+    branch: "",
+    temporaryPassword: "",
+  });
 
   useEffect(() => {
     let mounted = true;
@@ -190,6 +210,23 @@ export default function SupervisorManagement() {
     }
   }
 
+  async function createSupervisor() {
+    setCreatingSupervisor(true);
+    setError("");
+    try {
+      const created = await createSupervisorAccount(supervisorForm);
+      setStaff((current) => [created, ...current.filter((member) => member.id !== created.id)]);
+      setSelectedId(created.id);
+      setShowCreateSupervisor(false);
+      setSupervisorForm({ fullname: "", email: "", phone: "", branch: "", temporaryPassword: "" });
+      flash(`${created.fullname} was added as a SUSU supervisor.`);
+    } catch (err) {
+      setError(err.message || "Could not create supervisor account");
+    } finally {
+      setCreatingSupervisor(false);
+    }
+  }
+
   return (
     <div className="space-y-6 pb-20 lg:pb-0">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -205,12 +242,26 @@ export default function SupervisorManagement() {
             Choose which branch records each supervisor can review and correct.
           </p>
         </div>
-        <Link to="/directory">
-          <Button variant="outline" className="gap-2">
-            <ArrowLeft className="h-4 w-4" />
-            Back to Directory
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            className="gap-2"
+            onClick={() => {
+              setSupervisorForm((current) => ({ ...current, branch: current.branch || branches[0] || "" }));
+              setError("");
+              setShowCreateSupervisor(true);
+            }}
+          >
+            <Plus className="h-4 w-4" />
+            Add Supervisor
           </Button>
-        </Link>
+          <Link to="/directory">
+            <Button variant="outline" className="gap-2">
+              <ArrowLeft className="h-4 w-4" />
+              Back to Directory
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {error && (
@@ -218,6 +269,52 @@ export default function SupervisorManagement() {
           {error}
         </div>
       )}
+
+      <Dialog open={showCreateSupervisor} onOpenChange={setShowCreateSupervisor}>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-md rounded-xl p-5 sm:p-6">
+          <DialogHeader>
+            <DialogTitle>Add SUSU Supervisor</DialogTitle>
+            <DialogDescription>
+              Create an official email login and assign the supervisor's first managed branch.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 py-1">
+            <div className="space-y-1.5">
+              <Label htmlFor="supervisor-fullname">Full Name</Label>
+              <Input id="supervisor-fullname" value={supervisorForm.fullname} onChange={(event) => setSupervisorForm({ ...supervisorForm, fullname: event.target.value })} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="supervisor-email">Official Email</Label>
+              <Input id="supervisor-email" type="email" value={supervisorForm.email} onChange={(event) => setSupervisorForm({ ...supervisorForm, email: event.target.value })} />
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="supervisor-phone">Phone</Label>
+                <Input id="supervisor-phone" type="tel" value={supervisorForm.phone} onChange={(event) => setSupervisorForm({ ...supervisorForm, phone: event.target.value })} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Managed Branch</Label>
+                <ControlledSelect value={supervisorForm.branch} onChange={(branch) => setSupervisorForm({ ...supervisorForm, branch })} options={branches} placeholder="Select branch" className="h-9" />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="supervisor-password">Temporary Password</Label>
+              <Input id="supervisor-password" type="password" autoComplete="new-password" value={supervisorForm.temporaryPassword} onChange={(event) => setSupervisorForm({ ...supervisorForm, temporaryPassword: event.target.value })} />
+              <p className="text-xs text-muted-foreground">The supervisor can replace this password using Forgot Password.</p>
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={() => setShowCreateSupervisor(false)}>Cancel</Button>
+            <Button
+              type="button"
+              onClick={createSupervisor}
+              disabled={creatingSupervisor || !supervisorForm.fullname.trim() || !supervisorForm.email.trim() || !supervisorForm.phone.trim() || !supervisorForm.branch || supervisorForm.temporaryPassword.length < 8}
+            >
+              {creatingSupervisor ? <><Loader2 className="h-4 w-4 animate-spin" />Adding...</> : "Add Supervisor"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {message && (
         <div className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-600">
           <Check className="h-4 w-4" />

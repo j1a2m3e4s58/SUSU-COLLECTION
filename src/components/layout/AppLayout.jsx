@@ -7,6 +7,7 @@ import Sidebar, { navItems } from './Sidebar';
 import Header from './Header';
 import AgentScopePanel from '@/components/agents/AgentScopePanel';
 import { canManageCustomers as canManageCustomerRecords, isSusuAgent as isAgentUser } from '@/lib/roles';
+import { getHealthStatus } from '@/api/portalClient';
 
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -15,6 +16,7 @@ export default function AppLayout() {
     const stored = window.localStorage.getItem('susu_sidebar_collapsed');
     return stored === null ? true : stored === 'true';
   });
+  const [connectionStatus, setConnectionStatus] = useState('checking');
   const { user, portalSettings } = useAuth();
   const location = useLocation();
   const isSusuAgent = isAgentUser(user);
@@ -39,6 +41,38 @@ export default function AppLayout() {
     window.localStorage.setItem('susu_sidebar_collapsed', String(sidebarCollapsed));
   }, [sidebarCollapsed]);
 
+  useEffect(() => {
+    let mounted = true;
+    let failedChecks = 0;
+
+    const checkConnection = async () => {
+      if (!navigator.onLine) {
+        failedChecks += 1;
+        if (mounted) setConnectionStatus('offline');
+        return;
+      }
+      try {
+        await getHealthStatus();
+        failedChecks = 0;
+        if (mounted) setConnectionStatus('online');
+      } catch {
+        failedChecks += 1;
+        if (mounted) setConnectionStatus(failedChecks >= 2 ? 'offline' : 'reconnecting');
+      }
+    };
+
+    checkConnection();
+    const intervalId = window.setInterval(checkConnection, 15000);
+    window.addEventListener('online', checkConnection);
+    window.addEventListener('offline', checkConnection);
+    return () => {
+      mounted = false;
+      window.clearInterval(intervalId);
+      window.removeEventListener('online', checkConnection);
+      window.removeEventListener('offline', checkConnection);
+    };
+  }, []);
+
   return (
     <div className="min-h-screen bg-background flex">
       <Sidebar
@@ -48,6 +82,7 @@ export default function AppLayout() {
         settings={portalSettings}
         collapsed={sidebarCollapsed}
         onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
+        connectionStatus={connectionStatus}
       />
       <div className="flex-1 flex flex-col min-w-0">
         <WorkDateProvider>

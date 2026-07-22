@@ -130,3 +130,15 @@ export async function logoutFromServer() {
   }
 }
 
+export async function forgetTrustedDevice() {
+  return request("/auth/trusted-device/forget", {});
+}
+
+export async function revokeAllSessions() {
+  try {
+    return await request("/auth/sessions/revoke-all", {});
+  } finally {
+    clearStoredAuthUser();
+  }
+}
+
