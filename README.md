@@ -103,6 +103,8 @@ Follow [Phase 2 Data Governance](docs/phase-2-data-governance.md) for pagination
 
 Follow [Phase 3 Users and Roles](docs/phase-3-users-and-roles.md) for role-specific account creation, account lifecycle states, lockout visibility, and Live Mode test-data enforcement.
 
+Follow [Phase 4 Frontend and Mobile](docs/phase-4-frontend-and-mobile.md) for route-level bundle splitting, responsive dialog coverage, accessibility checks, and Render wake/retry behavior.
+
 ## Production Checklist
 
 1. Export a full Owner backup and store it outside Render.

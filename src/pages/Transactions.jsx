@@ -3,10 +3,11 @@ import { useSearchParams } from 'react-router-dom';
 import { getCollectionsPage, getPortalSettings, updateCollectionReview } from '@/api/portalClient';
 import PageControls from '@/components/PageControls';
 import ControlledSelect from '@/components/ui/controlled-select';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAgentScope } from '@/lib/AgentScopeContext';
 import { useAuth } from '@/lib/AuthContext';
 import { useWorkDate } from '@/lib/WorkDateContext';
-import { Search, Receipt, Download, UserCheck, CheckCircle, AlertTriangle, X } from 'lucide-react';
+import { Search, Receipt, Download, UserCheck, CheckCircle, AlertTriangle } from 'lucide-react';
 
 const statusColors = {
   completed: 'bg-emerald-500/10 text-emerald-500',
@@ -264,26 +265,22 @@ export default function Transactions() {
         </>
       )}
 
-      {reviewTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
-          <div className="absolute inset-0 bg-black/65 backdrop-blur-sm" onClick={() => setReviewTarget(null)} />
-          <div className="relative w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-2xl">
-            <div className="mb-4 flex items-start justify-between gap-3">
-              <div>
-                <h2 className="font-heading text-lg font-bold text-foreground">Request Correction</h2>
-                <p className="text-sm text-muted-foreground">{reviewTarget.account_name} - GHS {(reviewTarget.amount || 0).toLocaleString()}</p>
-              </div>
-              <button onClick={() => setReviewTarget(null)} className="rounded-lg p-1 text-muted-foreground hover:bg-muted"><X className="h-4 w-4" /></button>
-            </div>
-            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Correction Note</label>
+      <Dialog open={Boolean(reviewTarget)} onOpenChange={(nextOpen) => !nextOpen && setReviewTarget(null)}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Request Correction</DialogTitle>
+              <DialogDescription>{reviewTarget?.account_name} - GHS {(reviewTarget?.amount || 0).toLocaleString()}</DialogDescription>
+            </DialogHeader>
+            <label htmlFor="correction-note" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Correction Note</label>
             <textarea
+              id="correction-note"
               value={reviewNote}
               onChange={(event) => setReviewNote(event.target.value)}
               rows={4}
               className="w-full resize-none rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40"
               placeholder="Example: confirm amount with customer, wrong account selected, duplicate deposit..."
             />
-            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <DialogFooter className="mt-5 gap-2 sm:space-x-0">
               <button onClick={() => setReviewTarget(null)} className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted">Cancel</button>
               <button onClick={submitCorrectionRequest} disabled={reviewSaving} className="inline-flex items-center justify-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50">
                 <AlertTriangle className="h-4 w-4" />
@@ -293,10 +290,9 @@ export default function Transactions() {
                 <CheckCircle className="h-4 w-4" />
                 Approve
               </button>
-            </div>
-          </div>
-        </div>
-      )}
+            </DialogFooter>
+          </DialogContent>
+      </Dialog>
     </div>
   );
 }

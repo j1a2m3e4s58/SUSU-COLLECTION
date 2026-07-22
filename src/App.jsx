@@ -1,10 +1,9 @@
-import { useEffect } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import { Toaster } from "@/components/ui/toaster"
 import { toast } from "@/components/ui/use-toast"
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
 import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
-import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import ScrollToTop from './components/ScrollToTop';
@@ -12,31 +11,44 @@ import ScrollToTop from './components/ScrollToTop';
 import { Navigate } from 'react-router-dom';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { ThemeProvider } from '@/lib/ThemeContext';
-import Login from '@/pages/Login';
-import Register from '@/pages/Register';
-import ForgotPassword from '@/pages/ForgotPassword';
-import ResetPassword from '@/pages/ResetPassword';
 import AppLayout from '@/components/layout/AppLayout';
-import Dashboard from '@/pages/Dashboard';
-import FieldCollection from '@/pages/FieldCollection';
-import Customers from '@/pages/Customers';
-import Directory from '@/pages/Directory';
-import Transactions from '@/pages/Transactions';
-import Reports from '@/pages/Reports';
-import AgentManagement from '@/pages/AgentManagement';
-import BranchManagement from '@/pages/BranchManagement';
-import SupervisorManagement from '@/pages/SupervisorManagement';
-import AuditLog from '@/pages/AuditLog';
-import Profile from '@/pages/Profile';
-import Notifications from '@/pages/Notifications';
-import PortalControl from '@/pages/PortalControl';
-import PastStaff from '@/pages/PastStaff';
-import InactiveCustomers from '@/pages/InactiveCustomers';
-import OwnerOperations from '@/pages/OwnerOperations';
-import AccountStatus from '@/pages/AccountStatus';
 import { canManageCustomers, isOwnerAdmin, isSusuAgent } from '@/lib/roles';
 import SensitiveReauthDialog from '@/components/SensitiveReauthDialog';
 import AppErrorBoundary from '@/components/AppErrorBoundary';
+import NetworkStatusBanner from '@/components/NetworkStatusBanner';
+import PortalStartupState from '@/components/PortalStartupState';
+
+const Login = lazy(() => import('@/pages/Login'));
+const Register = lazy(() => import('@/pages/Register'));
+const ForgotPassword = lazy(() => import('@/pages/ForgotPassword'));
+const ResetPassword = lazy(() => import('@/pages/ResetPassword'));
+const Dashboard = lazy(() => import('@/pages/Dashboard'));
+const FieldCollection = lazy(() => import('@/pages/FieldCollection'));
+const Customers = lazy(() => import('@/pages/Customers'));
+const Directory = lazy(() => import('@/pages/Directory'));
+const Transactions = lazy(() => import('@/pages/Transactions'));
+const Reports = lazy(() => import('@/pages/Reports'));
+const AgentManagement = lazy(() => import('@/pages/AgentManagement'));
+const BranchManagement = lazy(() => import('@/pages/BranchManagement'));
+const SupervisorManagement = lazy(() => import('@/pages/SupervisorManagement'));
+const AuditLog = lazy(() => import('@/pages/AuditLog'));
+const Profile = lazy(() => import('@/pages/Profile'));
+const Notifications = lazy(() => import('@/pages/Notifications'));
+const PortalControl = lazy(() => import('@/pages/PortalControl'));
+const PastStaff = lazy(() => import('@/pages/PastStaff'));
+const InactiveCustomers = lazy(() => import('@/pages/InactiveCustomers'));
+const OwnerOperations = lazy(() => import('@/pages/OwnerOperations'));
+const AccountStatus = lazy(() => import('@/pages/AccountStatus'));
+const PageNotFound = lazy(() => import('./lib/PageNotFound'));
+
+const RouteLoadingState = () => (
+  <div role="status" aria-live="polite" className="flex min-h-[40vh] items-center justify-center p-6">
+    <div className="text-center">
+      <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-muted border-t-primary" aria-hidden="true" />
+      <p className="mt-3 text-sm text-muted-foreground">Loading page...</p>
+    </div>
+  </div>
+);
 
 const RequireAdmin = ({ children }) => {
   const { user } = useAuth();
@@ -62,16 +74,14 @@ const RequireCustomerManager = ({ children }) => {
 };
 
 const AuthenticatedApp = () => {
-  const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
+  const { isLoadingAuth, isLoadingPublicSettings, authError, bootstrapError, retryBootstrap } = useAuth();
 
   // Show loading spinner while checking app public settings or auth
   if (isLoadingPublicSettings || isLoadingAuth) {
-    return (
-      <div className="fixed inset-0 flex items-center justify-center">
-        <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div>
-      </div>
-    );
+    return <PortalStartupState onRetry={retryBootstrap} />;
   }
+
+  if (bootstrapError) return <PortalStartupState error={bootstrapError} onRetry={retryBootstrap} />;
 
   // Handle authentication errors
   if (authError) {
@@ -82,6 +92,7 @@ const AuthenticatedApp = () => {
 
   // Render the main app
   return (
+    <Suspense fallback={<RouteLoadingState />}>
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
@@ -110,6 +121,7 @@ const AuthenticatedApp = () => {
       </Route>
       <Route path="*" element={<PageNotFound />} />
     </Routes>
+    </Suspense>
   );
 };
 
@@ -138,6 +150,7 @@ function App() {
               <ScrollToTop />
               <AuthenticatedApp />
               <SensitiveReauthDialog />
+              <NetworkStatusBanner />
             </Router>
             <Toaster />
           </QueryClientProvider>

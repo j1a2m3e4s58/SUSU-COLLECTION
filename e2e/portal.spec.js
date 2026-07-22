@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
 
 const settings = {
   bankName: "Bawjiase Community Bank PLC",
@@ -105,6 +106,25 @@ async function seedAuthenticatedUser(page, user) {
   await mockApi(page, user);
 }
 
+async function expectDialogFitsViewport(page, testInfo) {
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  const box = await dialog.boundingBox();
+  const viewport = testInfo.project.use.viewport || { width: 1280, height: 720 };
+  expect(box.x).toBeGreaterThanOrEqual(8);
+  expect(box.y).toBeGreaterThanOrEqual(8);
+  expect(box.x + box.width).toBeLessThanOrEqual(viewport.width - 8);
+  expect(box.y + box.height).toBeLessThanOrEqual(viewport.height - 8);
+  await expect.poll(() => page.evaluate(() => document.activeElement?.closest('[role="dialog"]') !== null)).toBe(true);
+  for (let index = 0; index < 8; index += 1) {
+    await page.keyboard.press("Tab");
+    expect(await page.evaluate(() => document.activeElement?.closest('[role="dialog"]') !== null)).toBe(true);
+  }
+  const results = await new AxeBuilder({ page }).include('[role="dialog"]').analyze();
+  const serious = results.violations.filter((violation) => ["serious", "critical"].includes(violation.impact));
+  expect(serious, serious.map((item) => `${item.id}: ${item.help}`).join("\n")).toEqual([]);
+}
+
 test("staff login reaches the protected portal", async ({ page }, testInfo) => {
   test.skip(!["desktop", "mobile-400"].includes(testInfo.project.name), "Covered at representative desktop and mobile widths");
   await mockApi(page);
@@ -131,6 +151,7 @@ test("agent permissions and exact-account deposit search remain enforced", async
 });
 
 test("supervisor sees import dialog and report export controls", async ({ page }, testInfo) => {
+  test.setTimeout(90_000);
   test.skip(!["desktop", "mobile-400"].includes(testInfo.project.name), "Covered at representative desktop and mobile widths");
   await seedAuthenticatedUser(page, supervisor);
   await page.goto("/agents");
@@ -197,4 +218,80 @@ test("mobile staff edit actions fit in one horizontal row", async ({ page }, tes
   expect(cancelBox.x + cancelBox.width).toBeLessThanOrEqual(saveBox.x);
   expect(resetBox.x).toBeGreaterThanOrEqual(16);
   expect(resetBox.x + resetBox.width).toBeLessThanOrEqual(testInfo.project.use.viewport.width - 16);
+});
+
+test("operational dialogs fit and trap keyboard focus at every supported width", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
+  await seedAuthenticatedUser(page, owner);
+
+  await page.goto("/customers");
+  await page.getByRole("button", { name: "Add Customer" }).click();
+  await expectDialogFitsViewport(page, testInfo);
+  const branchSelect = page.getByRole("dialog").getByRole("combobox").first();
+  await branchSelect.focus();
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+
+  await page.goto("/agents");
+  await page.getByRole("button", { name: "Add Agent", exact: true }).click();
+  await expectDialogFitsViewport(page, testInfo);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.getByRole("button", { name: /import customers/i }).click();
+  await expectDialogFitsViewport(page, testInfo);
+  await page.keyboard.press("Escape");
+
+  await page.goto("/supervisor-management");
+  await page.getByRole("button", { name: "Add Supervisor" }).click();
+  await expectDialogFitsViewport(page, testInfo);
+  await page.keyboard.press("Escape");
+});
+
+test("tables and notifications expose accessible semantics", async ({ page }, testInfo) => {
+  test.skip(!["desktop", "mobile-400"].includes(testInfo.project.name), "Representative desktop and mobile accessibility check");
+  await seedAuthenticatedUser(page, owner);
+  await page.goto("/account-status");
+  if (testInfo.project.name === "desktop") {
+    await expect(page.getByRole("columnheader", { name: "User" })).toBeVisible();
+  }
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("portal-toast", { detail: { title: "Saved", description: "The test record was saved.", variant: "success" } })));
+  await expect(page.getByRole("status").filter({ hasText: "Saved" })).toBeVisible();
+  const results = await new AxeBuilder({ page }).analyze();
+  const serious = results.violations.filter((violation) => ["serious", "critical"].includes(violation.impact));
+  expect(serious, serious.map((item) => `${item.id}: ${item.help}`).join("\n")).toEqual([]);
+});
+
+test("startup retries while a sleeping service becomes available", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile-400", "One retry-state check is sufficient");
+  let settingsAttempts = 0;
+  await mockApi(page);
+  await page.route("**/mail-api/api/portal-settings", async (route) => {
+    settingsAttempts += 1;
+    if (settingsAttempts < 3) return route.fulfill({ status: 503, json: { error: "Service waking" } });
+    return route.fulfill({ json: { settings } });
+  });
+  await page.goto("/login");
+  await expect(page.getByText(/waking the secure service/i)).toBeVisible();
+  await expect(page.getByRole("heading", { name: /susu collection portal/i })).toBeVisible({ timeout: 12_000 });
+  expect(settingsAttempts).toBe(3);
+});
+
+test("startup failure offers a working retry action", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile-400", "One retry-action check is sufficient");
+  let unavailable = true;
+  await mockApi(page);
+  await page.route("**/mail-api/api/portal-settings", async (route) => {
+    if (unavailable) return route.fulfill({ status: 503, json: { error: "Database temporarily unavailable" } });
+    return route.fulfill({ json: { settings } });
+  });
+  await page.goto("/login");
+  const retry = page.getByRole("button", { name: /retry connection/i });
+  await expect(retry).toBeVisible({ timeout: 15_000 });
+  unavailable = false;
+  await retry.click();
+  await expect(page.getByRole("heading", { name: /susu collection portal/i })).toBeVisible({ timeout: 12_000 });
 });

@@ -1,21 +1,46 @@
+import { emitNetworkState, isRetryableFailure, retryDelay, wait } from "@/api/requestUtils";
+
 // @ts-ignore Vite injects import.meta.env at build time.
 const API_ROOT = (import.meta.env.VITE_MAIL_API_URL || "/mail-api/api").replace(/\/$/, "");
 const AUTH_STORAGE_KEY = "susu_auth_user";
 
-async function request(path, payload) {
-  const response = await fetch(`${API_ROOT}${path}`, {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload || {}),
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(data.error || "Request failed");
+async function request(path, payload, { retries = 0 } = {}) {
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      const response = await fetch(`${API_ROOT}${path}`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {}),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (response.ok) {
+        if (attempt > 0) emitNetworkState("recovered");
+        return data;
+      }
+      const error = new Error(data.error || "Request failed");
+      error.status = response.status;
+      error.code = data.code;
+      if (attempt < retries && isRetryableFailure(error)) {
+        emitNetworkState("retrying", { attempt: attempt + 1 });
+        await wait(retryDelay(attempt));
+        continue;
+      }
+      if (isRetryableFailure(error)) emitNetworkState("unavailable");
+      error.networkStateEmitted = true;
+      throw error;
+    } catch (error) {
+      if (error?.networkStateEmitted) throw error;
+      if (attempt < retries && isRetryableFailure(error)) {
+        emitNetworkState("retrying", { attempt: attempt + 1 });
+        await wait(retryDelay(attempt));
+        continue;
+      }
+      if (isRetryableFailure(error)) emitNetworkState("unavailable");
+      throw error;
+    }
   }
-  return data;
+  throw new Error("Request failed");
 }
 
 export function getStoredAuthUser() {
@@ -88,7 +113,7 @@ export async function completeAgentSetup(payload) {
 }
 
 export async function getCurrentUser() {
-  const data = await request("/auth/me", {});
+  const data = await request("/auth/me", {}, { retries: 2 });
   return storeAuthUser(data.user);
 }
 

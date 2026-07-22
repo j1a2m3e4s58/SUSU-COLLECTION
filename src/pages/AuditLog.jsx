@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { deleteAuditLog, deleteAuditLogs, exportBackup, getAuditLogsPage } from '@/api/portalClient';
 import PageControls from '@/components/PageControls';
 import ControlledSelect from '@/components/ui/controlled-select';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAuth } from '@/lib/AuthContext';
 import { exportHtmlPdf } from '@/lib/pdfExport';
 import { Download, FileText, Loader2, ScrollText, Search, Trash2 } from 'lucide-react';
@@ -326,27 +327,25 @@ export default function AuditLog() {
         <PageControls pagination={pagination} onPageChange={setPage} />
       </div>
 
-      {confirmDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
-          <div className="absolute inset-0 bg-black/65 backdrop-blur-sm" onClick={() => setConfirmDelete(null)} />
-          <div className="relative w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-2xl">
+      <Dialog open={Boolean(confirmDelete)} onOpenChange={(nextOpen) => !nextOpen && setConfirmDelete(null)}>
+          <DialogContent className="max-w-md">
             <div className="mb-4 flex items-start gap-3">
               <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-red-500/10 text-red-500">
                 <Trash2 className="h-5 w-5" />
               </div>
               <div className="min-w-0">
-                <h2 className="font-heading text-lg font-bold text-foreground">{confirmDelete.title}</h2>
-                <p className="mt-1 text-sm text-muted-foreground">{confirmDelete.message}</p>
+                <DialogTitle>{confirmDelete?.title}</DialogTitle>
+                <DialogDescription className="mt-1">{confirmDelete?.message}</DialogDescription>
               </div>
             </div>
             <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-500">
-              {confirmDelete.count} entr{confirmDelete.count === 1 ? 'y' : 'ies'} selected. This action cannot be undone.
+              {confirmDelete?.count} entr{confirmDelete?.count === 1 ? 'y' : 'ies'} selected. This action cannot be undone.
             </div>
             <div className="mt-3 rounded-xl border border-blue-500/20 bg-blue-500/10 p-3 text-sm text-muted-foreground">
               Export a backup before archiving so the local system can be restored if needed.
               {deleteBackupReady && <span className="mt-1 block font-medium text-emerald-500">Backup exported for this archive action.</span>}
             </div>
-            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <DialogFooter className="mt-5 gap-2 sm:space-x-0">
               <button
                 type="button"
                 onClick={() => setConfirmDelete(null)}
@@ -372,28 +371,21 @@ export default function AuditLog() {
                 {deletingSelected || deletingId ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                 Archive
               </button>
-            </div>
-          </div>
-        </div>
-      )}
+            </DialogFooter>
+          </DialogContent>
+      </Dialog>
 
-      {detailTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
-          <div className="absolute inset-0 bg-black/65 backdrop-blur-sm" onClick={() => setDetailTarget(null)} />
-          <div className="relative w-full max-w-2xl rounded-2xl border border-border bg-card p-5 shadow-2xl">
-            <div className="mb-4 flex items-start justify-between gap-3">
-              <div>
-                <h2 className="font-heading text-lg font-bold text-foreground">Audit Details</h2>
-                <p className="text-sm text-muted-foreground">{detailTarget.actorName || 'System'} - {(detailTarget.action || '-').replace(/_/g, ' ')}</p>
-              </div>
-              <button onClick={() => setDetailTarget(null)} className="rounded-lg px-2 py-1 text-sm text-muted-foreground hover:bg-muted">Close</button>
-            </div>
+      <Dialog open={Boolean(detailTarget)} onOpenChange={(nextOpen) => !nextOpen && setDetailTarget(null)}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Audit Details</DialogTitle>
+              <DialogDescription>{detailTarget?.actorName || 'System'} - {(detailTarget?.action || '-').replace(/_/g, ' ')}</DialogDescription>
+            </DialogHeader>
             <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-xl border border-border bg-muted/30 p-3 text-xs text-foreground">
-              {String(detailTarget.target || '-')}
+              {String(detailTarget?.target || '-')}
             </pre>
-          </div>
-        </div>
-      )}
+          </DialogContent>
+      </Dialog>
     </div>
   );
 }

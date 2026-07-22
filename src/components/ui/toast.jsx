@@ -7,6 +7,9 @@ const ToastProvider = React.forwardRef(({ ...props }, ref) => (
   <div
     ref={ref}
     data-portal-toast-root=""
+    role="region"
+    aria-live="polite"
+    aria-label="Notifications"
     className="fixed inset-x-3 bottom-20 z-[100] flex max-h-screen flex-col-reverse gap-3 sm:inset-x-auto sm:bottom-5 sm:right-5 sm:flex-col md:w-full md:max-w-[420px]"
     {...props}
   />
@@ -17,6 +20,9 @@ const ToastViewport = React.forwardRef(({ ...props }, ref) => (
   <div
     ref={ref}
     data-portal-toast-root=""
+    role="region"
+    aria-live="polite"
+    aria-label="Notifications"
     className="fixed inset-x-3 bottom-20 z-[100] flex max-h-screen flex-col-reverse gap-3 sm:inset-x-auto sm:bottom-5 sm:right-5 sm:flex-col md:w-full md:max-w-[420px]"
     {...props}
   />
@@ -49,6 +55,7 @@ const Toast = React.forwardRef(({ className, variant, open = true, onOpenChange:
   return (
     <div
       ref={ref}
+      role={variant === "destructive" ? "alert" : "status"}
       className={cn(toastVariants({ variant }), className)}
       {...props}
     />
@@ -71,6 +78,8 @@ ToastAction.displayName = "ToastAction";
 const ToastClose = React.forwardRef(({ className, ...props }, ref) => (
   <button
     ref={ref}
+    type="button"
+    aria-label="Dismiss notification"
     className={cn(
       "absolute right-3 top-3 rounded-full p-1 text-current/45 transition-colors hover:bg-current/10 hover:text-current focus:outline-none focus:ring-2 focus:ring-current/25",
       className

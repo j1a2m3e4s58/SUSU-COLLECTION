@@ -5,6 +5,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/components/ui/use-toast";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import AuthLayout from "@/components/AuthLayout";
 import { verifyAgentSetupPhone, verifyAgentSetupToken } from "@/api/authClient";
 import { useAuth } from "@/lib/AuthContext";
@@ -336,23 +337,21 @@ export default function Login() {
         </p>
       </div>
     </AuthLayout>
-    {setupStep && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
-        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={closeSetup} />
-        <div className="relative w-full max-w-sm rounded-2xl border border-primary/20 bg-background/95 p-5 shadow-2xl backdrop-blur-xl">
-          <div className="mb-4 text-center">
+    <Dialog open={Boolean(setupStep)} onOpenChange={(nextOpen) => !nextOpen && closeSetup()}>
+        <DialogContent className="max-w-sm border-primary/20 bg-background/95 backdrop-blur-xl">
+          <DialogHeader className="text-center sm:text-center">
             <p className="page-kicker text-center">
               {setupStage === "phone" ? "Verify contact" : setupStage === "token" ? "Enter token" : "Create login"}
             </p>
-            <h2 className="mt-1 font-display text-xl font-bold text-foreground">
+            <DialogTitle className="mt-1 font-display text-xl">
               Agent First Login
-            </h2>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            </DialogTitle>
+            <DialogDescription className="mt-1 text-xs leading-5">
               {setupStage === "phone" && "Enter the phone number your supervisor recorded."}
               {setupStage === "token" && "Enter the verification token generated for this login."}
               {setupStage === "reset" && "Choose your permanent username and password."}
-            </p>
-          </div>
+            </DialogDescription>
+          </DialogHeader>
 
           {setupStage === "phone" && (
             <form onSubmit={handleGetToken} className="space-y-3">
@@ -397,18 +396,15 @@ export default function Login() {
           <button type="button" onClick={closeSetup} className="mt-3 w-full rounded-lg border border-border px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted">
             Cancel
           </button>
-        </div>
-      </div>
-    )}
-    {mfaChallenge && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
-        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-        <div className="relative w-full max-w-sm rounded-2xl border border-primary/20 bg-background/95 p-5 shadow-2xl backdrop-blur-xl">
-          <div className="mb-4 text-center">
+        </DialogContent>
+    </Dialog>
+    <Dialog open={Boolean(mfaChallenge)} onOpenChange={(nextOpen) => { if (!nextOpen) { setMfaChallenge(null); setMfaCode(''); } }}>
+        <DialogContent className="max-w-sm border-primary/20 bg-background/95 backdrop-blur-xl">
+          <DialogHeader className="text-center sm:text-center">
             <p className="page-kicker text-center">Protected account</p>
-            <h2 className="mt-1 font-display text-xl font-bold text-foreground">Verify Your Login</h2>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">Enter the six-digit code sent to your official email.</p>
-          </div>
+            <DialogTitle className="mt-1 font-display text-xl">Verify Your Login</DialogTitle>
+            <DialogDescription className="mt-1 text-xs leading-5">Enter the six-digit code sent to your official email.</DialogDescription>
+          </DialogHeader>
           <form onSubmit={handlePrivilegedMfa} className="space-y-3">
             <div className="space-y-1">
               <Label htmlFor="privileged-mfa-code" className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Verification Code</Label>
@@ -435,9 +431,8 @@ export default function Login() {
             </Button>
             <button type="button" onClick={() => { setMfaChallenge(null); setMfaCode(''); }} className="w-full rounded-lg border border-border px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted">Cancel</button>
           </form>
-        </div>
-      </div>
-    )}
+        </DialogContent>
+    </Dialog>
     </>
   );
 }

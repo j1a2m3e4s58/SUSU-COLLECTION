@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { createCustomer } from '@/api/portalClient';
 import ControlledSelect from '@/components/ui/controlled-select';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAuth } from '@/lib/AuthContext';
-import { X, AlertCircle, Loader2 } from 'lucide-react';
+import { AlertCircle, Loader2 } from 'lucide-react';
 
 export default function AddCustomerDialog({ open, onClose, onSaved, branches }) {
   const { user } = useAuth();
@@ -11,8 +12,6 @@ export default function AddCustomerDialog({ open, onClose, onSaved, branches }) 
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-
-  if (!open) return null;
 
   const handleChange = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
 
@@ -44,26 +43,25 @@ export default function AddCustomerDialog({ open, onClose, onSaved, branches }) 
   const branchOptions = branches?.length ? branches : ['HEAD OFFICE', 'BAWJIASE', 'ADEISO', 'OFAAKOR', 'KASOA NEW MARKET', 'KASOA MAIN'];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative max-h-[calc(100vh-2rem)] w-full max-w-md overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-2xl sm:p-6">
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="font-heading text-lg font-bold text-foreground">Add New Customer</h2>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
-        </div>
+    <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Add New Customer</DialogTitle>
+          <DialogDescription>Create a branch customer with an exact 13-digit account number.</DialogDescription>
+        </DialogHeader>
 
         <div className="space-y-4">
           <div>
-            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Account Name *</label>
-            <input className={inputClass} value={form.account_name} onChange={e => handleChange('account_name', e.target.value)} placeholder="e.g. Kwame Mensah" />
+            <label htmlFor="add-customer-name" className="text-xs font-medium text-muted-foreground mb-1.5 block">Account Name *</label>
+            <input id="add-customer-name" className={inputClass} value={form.account_name} onChange={e => handleChange('account_name', e.target.value)} placeholder="e.g. Kwame Mensah" />
           </div>
           <div>
-            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Account Number *</label>
-            <input className={inputClass} value={form.account_number} onChange={e => handleChange('account_number', e.target.value.replace(/\D/g, '').slice(0, 13))} placeholder="13-digit account number" inputMode="numeric" maxLength={13} />
+            <label htmlFor="add-customer-account" className="text-xs font-medium text-muted-foreground mb-1.5 block">Account Number *</label>
+            <input id="add-customer-account" className={inputClass} value={form.account_number} onChange={e => handleChange('account_number', e.target.value.replace(/\D/g, '').slice(0, 13))} placeholder="13-digit account number" inputMode="numeric" maxLength={13} />
           </div>
           <div>
-            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Phone Number</label>
-            <input className={inputClass} value={form.phone} onChange={e => handleChange('phone', e.target.value)} placeholder="e.g. 0244000001" />
+            <label htmlFor="add-customer-phone" className="text-xs font-medium text-muted-foreground mb-1.5 block">Phone Number</label>
+            <input id="add-customer-phone" className={inputClass} value={form.phone} onChange={e => handleChange('phone', e.target.value)} placeholder="e.g. 0244000001" />
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Branch *</label>
@@ -88,15 +86,15 @@ export default function AddCustomerDialog({ open, onClose, onSaved, branches }) 
             </div>
           )}
 
-          <div className="flex gap-3 pt-2">
+          <DialogFooter className="flex-row gap-3 pt-2 sm:space-x-0">
             <button onClick={onClose} className="flex-1 bg-muted hover:bg-muted/70 text-foreground text-sm font-medium py-2.5 rounded-lg transition-colors">Cancel</button>
             <button onClick={handleSave} disabled={saving}
               className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium py-2.5 rounded-lg transition-colors flex items-center justify-center gap-2">
               {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving...</> : 'Add Customer'}
             </button>
-          </div>
+          </DialogFooter>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

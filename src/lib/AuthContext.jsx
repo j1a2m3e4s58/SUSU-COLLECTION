@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import {
   clearStoredAuthUser,
   completeAgentSetup,
@@ -20,30 +20,38 @@ export const AuthProvider = ({ children }) => {
   const [portalSettings, setPortalSettings] = useState(null);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [isLoadingPublicSettings, setIsLoadingPublicSettings] = useState(true);
+  const [bootstrapError, setBootstrapError] = useState(null);
 
-  useEffect(() => {
+  const loadBootstrap = useCallback(async () => {
+    setIsLoadingAuth(true);
+    setIsLoadingPublicSettings(true);
+    setBootstrapError(null);
     const cached = normalizeUser(getStoredAuthUser());
     if (cached) setUser(cached);
-    getCurrentUser()
-      .then((current) => setUser(normalizeUser(current)))
-      .catch(() => {
-        clearStoredAuthUser();
-        setUser(null);
-      })
-      .finally(() => setIsLoadingAuth(false));
+    const [authResult, settingsResult] = await Promise.allSettled([
+      getCurrentUser(),
+      getPortalSettings(),
+    ]);
+    if (authResult.status === "fulfilled") {
+      setUser(normalizeUser(authResult.value));
+    } else if (authResult.reason?.status === 401) {
+      clearStoredAuthUser();
+      setUser(null);
+    }
+    if (settingsResult.status === "fulfilled") setPortalSettings(settingsResult.value);
+    const transientFailure = [authResult, settingsResult].find((result) => result.status === "rejected" && result.reason?.status !== 401);
+    if (transientFailure) setBootstrapError(transientFailure.reason);
+    setIsLoadingAuth(false);
+    setIsLoadingPublicSettings(false);
   }, []);
+
+  useEffect(() => { loadBootstrap(); }, [loadBootstrap]);
 
   const refreshPortalSettings = async () => {
     const settings = await getPortalSettings();
     setPortalSettings(settings);
     return settings;
   };
-
-  useEffect(() => {
-    refreshPortalSettings()
-      .catch(() => {})
-      .finally(() => setIsLoadingPublicSettings(false));
-  }, []);
 
   useEffect(() => {
     if (!user?.id) return undefined;
@@ -126,6 +134,8 @@ export const AuthProvider = ({ children }) => {
       isLoadingAuth,
       isLoadingPublicSettings,
       authError: null,
+      bootstrapError,
+      retryBootstrap: loadBootstrap,
       appPublicSettings: portalSettings,
       authChecked: !isLoadingAuth,
       refreshPortalSettings,
@@ -143,7 +153,7 @@ export const AuthProvider = ({ children }) => {
         window.location.href = "/login";
       },
     }),
-    [user, portalSettings, isLoadingAuth, isLoadingPublicSettings],
+    [user, portalSettings, isLoadingAuth, isLoadingPublicSettings, bootstrapError, loadBootstrap],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { updateCustomer } from '@/api/portalClient';
 import ControlledSelect from '@/components/ui/controlled-select';
-import { AlertCircle, Loader2, X } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { AlertCircle, Loader2 } from 'lucide-react';
 
 export default function EditCustomerDialog({ customer, open, onClose, onSaved, branches }) {
   const [form, setForm] = useState({
@@ -28,7 +29,7 @@ export default function EditCustomerDialog({ customer, open, onClose, onSaved, b
     setError('');
   }, [customer]);
 
-  if (!open || !customer) return null;
+  if (!customer) return null;
 
   const handleChange = (field, value) => setForm((current) => ({ ...current, [field]: value }));
 
@@ -57,25 +58,22 @@ export default function EditCustomerDialog({ customer, open, onClose, onSaved, b
   const branchOptions = branches?.length ? branches : ['HEAD OFFICE', 'BAWJIASE', 'ADEISO', 'OFAAKOR', 'KASOA NEW MARKET', 'KASOA MAIN'];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative max-h-[calc(100vh-2rem)] w-full max-w-md overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-2xl sm:p-6">
-        <div className="mb-5 flex items-center justify-between">
-          <h2 className="font-heading text-lg font-bold text-foreground">Edit Customer</h2>
-          <button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
+    <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Edit Customer</DialogTitle>
+          <DialogDescription>Update customer details, branch, or account status.</DialogDescription>
+        </DialogHeader>
 
         <div className="space-y-4">
-          <Field label="Account Name *">
-            <input className={inputClass} value={form.account_name} onChange={(event) => handleChange('account_name', event.target.value)} />
+          <Field label="Account Name *" htmlFor="edit-customer-name">
+            <input id="edit-customer-name" className={inputClass} value={form.account_name} onChange={(event) => handleChange('account_name', event.target.value)} />
           </Field>
-          <Field label="Account Number *">
-            <input className={inputClass} value={form.account_number} onChange={(event) => handleChange('account_number', event.target.value.replace(/\D/g, '').slice(0, 13))} inputMode="numeric" maxLength={13} />
+          <Field label="Account Number *" htmlFor="edit-customer-account">
+            <input id="edit-customer-account" className={inputClass} value={form.account_number} onChange={(event) => handleChange('account_number', event.target.value.replace(/\D/g, '').slice(0, 13))} inputMode="numeric" maxLength={13} />
           </Field>
-          <Field label="Phone">
-            <input className={inputClass} value={form.phone} onChange={(event) => handleChange('phone', event.target.value)} />
+          <Field label="Phone" htmlFor="edit-customer-phone">
+            <input id="edit-customer-phone" className={inputClass} value={form.phone} onChange={(event) => handleChange('phone', event.target.value)} />
           </Field>
           <Field label="Branch *">
             <ControlledSelect
@@ -98,24 +96,24 @@ export default function EditCustomerDialog({ customer, open, onClose, onSaved, b
             </div>
           )}
 
-          <div className="flex gap-3 pt-2">
+          <DialogFooter className="flex-row gap-3 pt-2 sm:space-x-0">
             <button type="button" onClick={onClose} className="flex-1 rounded-lg bg-muted py-2.5 text-sm font-medium text-foreground hover:bg-muted/70">
               Cancel
             </button>
             <button type="button" onClick={handleSave} disabled={saving} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-blue-600 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
               {saving ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving...</> : 'Save Changes'}
             </button>
-          </div>
+          </DialogFooter>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
-function Field({ label, children }) {
+function Field({ label, htmlFor, children }) {
   return (
     <div>
-      <label className="mb-1.5 block text-xs font-medium text-muted-foreground">{label}</label>
+      <label htmlFor={htmlFor} className="mb-1.5 block text-xs font-medium text-muted-foreground">{label}</label>
       {children}
     </div>
   );

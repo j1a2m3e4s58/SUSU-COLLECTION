@@ -2,10 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { createAgentAccount, deleteStaff, exportBackup, getAgentsPage, getCollections, getCustomerImports, getPortalSettings, importCustomers, reopenDailyCollections, resetAgentPassword, updateStaff } from '@/api/portalClient';
 import PageControls from '@/components/PageControls';
 import ControlledSelect from '@/components/ui/controlled-select';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAuth } from '@/lib/AuthContext';
 import { useWorkDate } from '@/lib/WorkDateContext';
 import { exportHtmlPdf } from '@/lib/pdfExport';
-import { UserCog, Search, Building2, X, AlertCircle, Loader2, Trash2, FileText, Download, Plus, Upload, KeyRound, LockKeyhole } from 'lucide-react';
+import { UserCog, Search, Building2, AlertCircle, Loader2, Trash2, FileText, Download, Plus, Upload, KeyRound, LockKeyhole } from 'lucide-react';
 
 export default function AgentManagement() {
   const { user } = useAuth();
@@ -528,17 +529,15 @@ export default function AgentManagement() {
           </div>
         )}
       </section>
-      {confirmDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
-          <div className="absolute inset-0 bg-black/65 backdrop-blur-sm" onClick={() => setConfirmDelete(false)} />
-          <div className="relative w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-2xl">
+      <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+          <DialogContent className="max-w-md">
             <div className="mb-4 flex items-start gap-3">
               <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-red-500/10 text-red-500">
                 <Trash2 className="h-5 w-5" />
               </div>
               <div>
-                <h2 className="font-heading text-lg font-bold text-foreground">Delete selected agents?</h2>
-                <p className="mt-1 text-sm text-muted-foreground">This clears their login so they can sign up again.</p>
+                <DialogTitle>Delete selected agents?</DialogTitle>
+                <DialogDescription className="mt-1">This clears their login so they can sign up again.</DialogDescription>
               </div>
             </div>
             <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-500">
@@ -548,7 +547,7 @@ export default function AgentManagement() {
               Export a backup before deleting so staff, customers, collections, and audit records can be restored if needed.
               {deleteBackupReady && <span className="mt-1 block font-medium text-emerald-500">Backup exported for this delete action.</span>}
             </div>
-            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <DialogFooter className="mt-5 gap-2 sm:space-x-0">
               <button type="button" onClick={() => setConfirmDelete(false)} className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted">Cancel</button>
               <button type="button" onClick={exportDeleteBackup} disabled={exportingBackup}
                 className="inline-flex items-center justify-center gap-2 rounded-lg border border-blue-500/30 px-4 py-2 text-sm font-medium text-blue-500 hover:bg-blue-500/10 disabled:opacity-50">
@@ -560,22 +559,16 @@ export default function AgentManagement() {
                 {deletingSelected ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                 Delete
               </button>
-            </div>
-          </div>
-        </div>
-      )}
+            </DialogFooter>
+          </DialogContent>
+      </Dialog>
 
-      {showCreateAgent && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowCreateAgent(false)} />
-          <div className="relative max-h-[calc(100vh-2rem)] w-full max-w-md overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-2xl sm:p-6">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h2 className="font-heading text-lg font-bold text-foreground">Add Agent Login</h2>
-                <p className="text-sm text-muted-foreground">Create a simple username login for a SUSU agent.</p>
-              </div>
-              <button onClick={() => setShowCreateAgent(false)} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
-            </div>
+      <Dialog open={showCreateAgent} onOpenChange={setShowCreateAgent}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Add Agent Login</DialogTitle>
+              <DialogDescription>Create a simple username login for a SUSU agent.</DialogDescription>
+            </DialogHeader>
             <div className="space-y-3">
               <label className="block space-y-1.5">
                 <span className="text-xs font-semibold uppercase text-muted-foreground">Full Name</span>
@@ -598,7 +591,7 @@ export default function AgentManagement() {
                 <ControlledSelect value={agentForm.branch} onChange={(branch) => setAgentForm({ ...agentForm, branch })} options={scopedBranches} placeholder="Select branch" className={inputClass} />
               </div>
               <div className="flex items-start gap-3 rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3">
-                <input type="checkbox" checked readOnly className="mt-0.5 h-4 w-4 accent-emerald-600" />
+                <input type="checkbox" checked readOnly aria-label="Force reset on first login" className="mt-0.5 h-4 w-4 accent-emerald-700" />
                 <div>
                   <p className="text-sm font-medium text-foreground">Force reset on first login</p>
                   <p className="text-xs text-muted-foreground">Required for every new agent account.</p>
@@ -607,29 +600,23 @@ export default function AgentManagement() {
               <div className="rounded-lg border border-blue-500/20 bg-blue-500/10 p-3 text-xs text-muted-foreground">
                 First login will ask the agent for this phone number, then generate a one-time setup token before their permanent password.
               </div>
-              <div className="flex gap-3 pt-2">
+              <DialogFooter className="flex-row gap-3 pt-2 sm:space-x-0">
                 <button onClick={() => setShowCreateAgent(false)} className="flex-1 rounded-lg bg-muted py-2.5 text-sm font-medium text-foreground hover:bg-muted/70">Cancel</button>
-                <button onClick={handleCreateAgent} disabled={saving} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-emerald-600 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">
+                <button onClick={handleCreateAgent} disabled={saving} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-emerald-700 py-2.5 text-sm font-medium text-white hover:bg-emerald-800 disabled:opacity-50">
                   {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
                   Add Agent
                 </button>
-              </div>
+              </DialogFooter>
             </div>
-          </div>
-        </div>
-      )}
+          </DialogContent>
+      </Dialog>
 
-      {showImportCustomers && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowImportCustomers(false)} />
-          <div className="relative max-h-[calc(100vh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-2xl sm:p-6">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h2 className="font-heading text-lg font-bold text-foreground">Import Customers</h2>
-                <p className="text-sm text-muted-foreground">Upload CSV or Excel with Account Name, Account Number, Branch.</p>
-              </div>
-              <button onClick={() => setShowImportCustomers(false)} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
-            </div>
+      <Dialog open={showImportCustomers} onOpenChange={setShowImportCustomers}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Import Customers</DialogTitle>
+              <DialogDescription>Upload CSV or Excel with Account Name, Account Number, and Branch.</DialogDescription>
+            </DialogHeader>
             <div className="space-y-4">
               <ControlledSelect value={importBranch} onChange={setImportBranch} options={scopedBranches} placeholder="Import branch" className={inputClass} />
               <button type="button" onClick={downloadCustomerTemplate} className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-background/70 px-4 py-2 text-sm font-medium text-foreground hover:bg-muted">
@@ -665,57 +652,45 @@ export default function AgentManagement() {
                   Imported {importSummary.createdCount || 0}. Skipped {(importSummary.skipped || []).length}.
                 </div>
               )}
-              <div className="flex gap-3 pt-2">
+              <DialogFooter className="flex-row gap-3 pt-2 sm:space-x-0">
                 <button onClick={() => setShowImportCustomers(false)} className="flex-1 rounded-lg bg-muted py-2.5 text-sm font-medium text-foreground hover:bg-muted/70">Close</button>
-                <button onClick={handleImportCustomers} disabled={saving || !importRows.length} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-cyan-600 py-2.5 text-sm font-medium text-white hover:bg-cyan-700 disabled:opacity-50">
+                <button onClick={handleImportCustomers} disabled={saving || !importRows.length} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-cyan-700 py-2.5 text-sm font-medium text-white hover:bg-cyan-800 disabled:opacity-50">
                   {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
                   Import
                 </button>
-              </div>
+              </DialogFooter>
             </div>
-          </div>
-        </div>
-      )}
+          </DialogContent>
+      </Dialog>
 
-      {resetTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setResetTarget(null)} />
-          <div className="relative max-h-[calc(100vh-2rem)] w-full max-w-md overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-2xl sm:p-6">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h2 className="font-heading text-lg font-bold text-foreground">Reset Agent Login</h2>
-                <p className="text-sm text-muted-foreground">{resetTarget.fullname || resetTarget.full_name}</p>
-              </div>
-              <button onClick={() => setResetTarget(null)} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
-            </div>
+      <Dialog open={Boolean(resetTarget)} onOpenChange={(nextOpen) => !nextOpen && setResetTarget(null)}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Reset Agent Login</DialogTitle>
+              <DialogDescription>{resetTarget?.fullname || resetTarget?.full_name}</DialogDescription>
+            </DialogHeader>
             <div className="space-y-3">
               <input autoComplete="off" className={inputClass} value={resetUsername} onChange={(e) => setResetUsername(e.target.value)} placeholder="Temporary username" />
               <input type="password" autoComplete="new-password" className={inputClass} value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} placeholder="New temporary password" />
               <p className="text-xs text-muted-foreground">The agent logs in with this temporary username/password, verifies phone, enters the generated setup token, then sets their permanent username and password.</p>
-              <div className="flex gap-3 pt-2">
+              <DialogFooter className="flex-row gap-3 pt-2 sm:space-x-0">
                 <button onClick={() => setResetTarget(null)} className="flex-1 rounded-lg bg-muted py-2.5 text-sm font-medium text-foreground hover:bg-muted/70">Cancel</button>
-                <button onClick={handleResetAgentPassword} disabled={saving || !resetUsername || !resetPassword} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-amber-600 py-2.5 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50">
+                <button onClick={handleResetAgentPassword} disabled={saving || !resetUsername || !resetPassword} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-amber-700 py-2.5 text-sm font-medium text-white hover:bg-amber-800 disabled:opacity-50">
                   {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
                   Reset Login
                 </button>
-              </div>
+              </DialogFooter>
             </div>
-          </div>
-        </div>
-      )}
+          </DialogContent>
+      </Dialog>
 
       {/* Transfer Dialog */}
-      {transferAgent && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setTransferAgent(null)} />
-          <div className="relative max-h-[calc(100vh-2rem)] w-full max-w-md overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-2xl sm:p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h2 className="font-heading text-lg font-bold text-foreground">Transfer Branch</h2>
-                <p className="text-sm text-muted-foreground">{transferAgent.fullname || transferAgent.full_name} - {transferAgent.branch || transferAgent.branch_name || 'Unassigned'}</p>
-              </div>
-              <button onClick={() => setTransferAgent(null)} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
-            </div>
+      <Dialog open={Boolean(transferAgent)} onOpenChange={(nextOpen) => !nextOpen && setTransferAgent(null)}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Transfer Branch</DialogTitle>
+              <DialogDescription>{transferAgent?.fullname || transferAgent?.full_name} - {transferAgent?.branch || transferAgent?.branch_name || 'Unassigned'}</DialogDescription>
+            </DialogHeader>
             <div className="space-y-4">
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1.5 block">New Branch</label>
@@ -737,17 +712,16 @@ export default function AgentManagement() {
                 <p className="text-xs text-muted-foreground">This action will be logged in the audit trail with old branch, new branch, and reason.</p>
               </div>
               {error && <p className="text-sm text-red-500">{error}</p>}
-              <div className="flex gap-3">
+              <DialogFooter className="flex-row gap-3 sm:space-x-0">
                 <button onClick={() => setTransferAgent(null)} className="flex-1 bg-muted hover:bg-muted/70 text-foreground text-sm font-medium py-2.5 rounded-lg">Cancel</button>
                 <button onClick={handleTransfer} disabled={saving}
                   className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium py-2.5 rounded-lg flex items-center justify-center gap-2">
                   {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Building2 className="w-4 h-4" />} Transfer
                 </button>
-              </div>
+              </DialogFooter>
             </div>
-          </div>
-        </div>
-      )}
+          </DialogContent>
+      </Dialog>
     </div>
   );
 }

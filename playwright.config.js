@@ -18,11 +18,12 @@ export default defineConfig({
   webServer: {
     command: "npm run dev -- --host 127.0.0.1 --port 4187 --strictPort",
     url: "http://127.0.0.1:4187/login",
-    reuseExistingServer: false,
+    reuseExistingServer: true,
     timeout: 120_000,
   },
   projects: [
     { name: "desktop", use: { ...devices["Desktop Chrome"] } },
+    { name: "tablet", use: { viewport: { width: 768, height: 1024 }, hasTouch: true } },
     { name: "mobile-360", use: { viewport: { width: 360, height: 780 }, isMobile: true, hasTouch: true } },
     { name: "mobile-400", use: { viewport: { width: 400, height: 850 }, isMobile: true, hasTouch: true } },
     { name: "mobile-430", use: { viewport: { width: 430, height: 932 }, isMobile: true, hasTouch: true } },

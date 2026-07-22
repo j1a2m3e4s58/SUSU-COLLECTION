@@ -1,4 +1,6 @@
 ﻿
+import { emitNetworkState, isRetryableFailure, retryDelay, wait } from "@/api/requestUtils";
+
 // @ts-ignore Vite injects import.meta.env at build time.
 const API_ROOT = (import.meta.env.VITE_MAIL_API_URL || "/mail-api/api").replace(/\/$/, "");
 export const PORTAL_CONTROL_AUTHORIZATION_KEY = "susu.portalAuthorization";
@@ -21,31 +23,57 @@ export function setStoredPortalAuthorization(token) {
 async function apiRequest(path, options = {}) {
   const { method = "GET", body } = options;
   const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
-  const response = await fetch(`${API_ROOT}${path}`, {
-    method,
-    credentials: "include",
-    headers: {
-      ...(!isFormData ? { "Content-Type": "application/json" } : {}),
-    },
-    ...(body ? { body: isFormData ? body : JSON.stringify(body) } : {}),
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    if (response.status === 428 && data.code === "REAUTHENTICATION_REQUIRED" && typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("portal-reauth-required"));
-    }
-    if (response.status === 403 && /Portal Control authorization expired/i.test(data.error || "")) {
-      setStoredPortalAuthorization("");
-    }
-    if (response.status === 401 && /session|unauthorized/i.test(data.error || "")) {
-      localStorage.removeItem("susu_auth_user");
-      if (typeof window !== "undefined" && !window.location.pathname.includes("/login")) {
-        window.location.href = "/login";
+  const retries = method === "GET" ? 2 : 0;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      const response = await fetch(`${API_ROOT}${path}`, {
+        method,
+        credentials: "include",
+        headers: {
+          ...(!isFormData ? { "Content-Type": "application/json" } : {}),
+        },
+        ...(body ? { body: isFormData ? body : JSON.stringify(body) } : {}),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (response.ok) {
+        if (attempt > 0) emitNetworkState("recovered");
+        return data;
       }
+      const error = new Error(data.error || "Request failed");
+      error.status = response.status;
+      error.code = data.code;
+      if (attempt < retries && isRetryableFailure(error)) {
+        emitNetworkState("retrying", { attempt: attempt + 1 });
+        await wait(retryDelay(attempt));
+        continue;
+      }
+      if (response.status === 428 && data.code === "REAUTHENTICATION_REQUIRED" && typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("portal-reauth-required"));
+      }
+      if (response.status === 403 && /Portal Control authorization expired/i.test(data.error || "")) {
+        setStoredPortalAuthorization("");
+      }
+      if (response.status === 401 && /session|unauthorized/i.test(data.error || "")) {
+        localStorage.removeItem("susu_auth_user");
+        if (typeof window !== "undefined" && !window.location.pathname.includes("/login")) {
+          window.location.href = "/login";
+        }
+      }
+      if (isRetryableFailure(error)) emitNetworkState("unavailable");
+      error.networkStateEmitted = true;
+      throw error;
+    } catch (error) {
+      if (error?.networkStateEmitted) throw error;
+      if (attempt < retries && isRetryableFailure(error)) {
+        emitNetworkState("retrying", { attempt: attempt + 1 });
+        await wait(retryDelay(attempt));
+        continue;
+      }
+      if (isRetryableFailure(error)) emitNetworkState("unavailable");
+      throw error;
     }
-    throw new Error(data.error || "Request failed");
   }
-  return data;
+  throw new Error("Request failed");
 }
 
 export function normalizeUser(user) {

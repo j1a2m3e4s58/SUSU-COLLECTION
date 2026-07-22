@@ -185,7 +185,7 @@ export default function Header({ onMenuClick, user }) {
   return (
     <header className="sticky top-0 z-30 bg-background/80 backdrop-blur-xl border-b border-border">
       <div className="flex items-center gap-3 lg:gap-4 px-4 lg:px-6 h-16">
-        <button onClick={onMenuClick} className="lg:hidden text-foreground p-1.5 -ml-1">
+        <button type="button" onClick={onMenuClick} aria-label="Open navigation menu" className="lg:hidden text-foreground p-1.5 -ml-1">
           <Menu className="w-5 h-5" />
         </button>
 
@@ -194,6 +194,10 @@ export default function Header({ onMenuClick, user }) {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <input
               type="text"
+              aria-label="Search the portal"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded={searchOpen && Boolean(globalSearch.trim())}
               value={globalSearch}
               onFocus={() => {
                 setSearchOpen(true);
@@ -334,12 +338,14 @@ export default function Header({ onMenuClick, user }) {
             </button>
             <input
               type="date"
+              aria-label="Viewing date"
               value={selectedDate}
               onChange={(event) => event.target.value && selectDay(event.target.value)}
               className="h-9 min-w-0 rounded-lg border border-border bg-muted/50 px-3 py-1.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40"
             />
             <input
               type="month"
+              aria-label="Viewing month"
               value={selectedMonth}
               onChange={(event) => selectMonth(event.target.value)}
               className="h-9 min-w-0 rounded-lg border border-border bg-muted/50 px-3 py-1.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40"

@@ -16,6 +16,7 @@ export default function ControlledSelect({
   disabled = false,
   contentClassName = "",
   emptyLabel = "",
+  ariaLabel = "",
 }) {
   const emptyValue = "__empty__";
   const normalizedOptions = (options || []).map((option) => (
@@ -27,7 +28,7 @@ export default function ControlledSelect({
       onValueChange={(next) => onChange(next === emptyValue ? "" : next)}
       disabled={disabled}
     >
-      <SelectTrigger className={className}>
+      <SelectTrigger className={className} aria-label={ariaLabel || placeholder}>
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent
