@@ -407,7 +407,6 @@ export default function PortalControl() {
       branchRenames: pendingRenames.branches,
       departmentRenames: pendingRenames.departments,
       formCategories: [],
-      trainingCategories: [],
       departmentChangeTypes: [],
       transferLocations: [],
       appMode: draft.appMode === "live" ? "live" : "test",
