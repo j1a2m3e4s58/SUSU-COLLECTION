@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, HandCoins, Users, Receipt, BarChart3,
   UserCog, Building2, ScrollText, UserCircle, Contact, SlidersHorizontal, UserX,
-  ChevronLeft, PanelLeftClose, PanelLeftOpen
+  ChevronLeft, PanelLeftClose, PanelLeftOpen, ShieldCheck
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -30,6 +30,7 @@ export const navItems = [
   { label: 'Branches', path: '/branches', icon: Building2, managerOnly: true },
   { label: 'Past Staff', path: '/past-staff', icon: UserX, ownerOnly: true },
   { label: 'Portal Control', path: '/portal-control', icon: SlidersHorizontal, portalControl: true, ownerOnly: true },
+  { label: 'Owner Operations', path: '/owner-operations', icon: ShieldCheck, ownerOnly: true },
   { label: 'Audit Log', path: '/audit-log', icon: ScrollText, managerOnly: true },
   { label: 'Profile', path: '/profile', icon: UserCircle },
 ];

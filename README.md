@@ -99,6 +99,8 @@ Configure all required secrets in Render:
 
 Follow [Phase 1 Production Readiness](docs/phase-1-production-readiness.md) for the Render workflow test, PostgreSQL recovery drill, health verification, and alert setup.
 
+Follow [Phase 2 Data Governance](docs/phase-2-data-governance.md) for pagination, reconciliation, active-device revocation, retention rules, and the mandatory independent security review.
+
 ## Production Checklist
 
 1. Export a full Owner backup and store it outside Render.

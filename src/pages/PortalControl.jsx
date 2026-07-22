@@ -59,6 +59,10 @@ const numberFields = [
   ["sensitiveReauthMinutes", "Sensitive Action Confirmation Minutes"],
   ["verificationMinutes", "Verification Code Minutes"],
   ["passwordResetMinutes", "Password Reset Minutes"],
+  ["auditRetentionDays", "Audit Log Retention Days"],
+  ["notificationRetentionDays", "Read Notification Retention Days"],
+  ["verificationRetentionHours", "Expired Verification Retention Hours"],
+  ["expiredSessionRetentionDays", "Expired Session Retention Days"],
 ];
 
 function cleanList(values) {
@@ -862,6 +866,37 @@ export default function PortalControl() {
           All operational staff use the SUSU department. Directory groups them as SUSU Supervisors or SUSU Agents from their role, not from separate department names.
         </p>
         <Badge className="mt-3">SUSU</Badge>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card p-5">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="font-heading text-lg font-bold text-foreground">Independent Security Review</h2>
+            <p className="mt-1 text-sm text-muted-foreground">A qualified reviewer must test the deployed portal before real deposits are accepted. Record the engagement and final report here.</p>
+          </div>
+          <Badge variant={draft.securityReviewStatus === "completed" ? "default" : "secondary"}>{String(draft.securityReviewStatus || "not-scheduled").replace(/-/g, " ")}</Badge>
+        </div>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label>Review Status</Label>
+            <ControlledSelect
+              value={draft.securityReviewStatus || "not-scheduled"}
+              onChange={(value) => update("securityReviewStatus", value)}
+              options={[
+                { value: "not-scheduled", label: "Not Scheduled" },
+                { value: "scheduled", label: "Scheduled" },
+                { value: "in-progress", label: "In Progress" },
+                { value: "remediation-required", label: "Remediation Required" },
+                { value: "completed", label: "Completed" },
+              ]}
+              className="h-10 rounded-lg border border-border bg-background px-3 text-sm"
+            />
+          </div>
+          <div className="space-y-1.5"><Label>Reviewer / Security Firm</Label><Input value={draft.securityReviewProvider || ""} onChange={(event) => update("securityReviewProvider", event.target.value)} placeholder="Independent reviewer name" /></div>
+          <div className="space-y-1.5"><Label>Report Reference</Label><Input value={draft.securityReviewReference || ""} onChange={(event) => update("securityReviewReference", event.target.value)} placeholder="Report ID or controlled document reference" /></div>
+          <div className="space-y-1.5"><Label>Completion Date</Label><Input type="date" value={draft.securityReviewDate || ""} onChange={(event) => update("securityReviewDate", event.target.value)} /></div>
+        </div>
+        <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">Do not mark this completed without an independent written report and remediation evidence. Completion is required by the Live readiness check.</div>
       </section>
 
       {settings?.updatedBy && (

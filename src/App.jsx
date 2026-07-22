@@ -32,6 +32,7 @@ import Notifications from '@/pages/Notifications';
 import PortalControl from '@/pages/PortalControl';
 import PastStaff from '@/pages/PastStaff';
 import InactiveCustomers from '@/pages/InactiveCustomers';
+import OwnerOperations from '@/pages/OwnerOperations';
 import { canManageCustomers, isOwnerAdmin, isSusuAgent } from '@/lib/roles';
 import SensitiveReauthDialog from '@/components/SensitiveReauthDialog';
 import AppErrorBoundary from '@/components/AppErrorBoundary';
@@ -101,6 +102,7 @@ const AuthenticatedApp = () => {
           <Route path="/profile" element={<Profile />} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/portal-control" element={<RequireOwner><PortalControl /></RequireOwner>} />
+          <Route path="/owner-operations" element={<RequireOwner><OwnerOperations /></RequireOwner>} />
           <Route path="/past-staff" element={<RequireOwner><PastStaff /></RequireOwner>} />
         </Route>
       </Route>

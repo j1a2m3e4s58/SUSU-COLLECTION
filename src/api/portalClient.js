@@ -137,6 +137,21 @@ export async function getActiveStaff() {
   return (data.users || []).map(normalizeUser);
 }
 
+function pagedPath(path, page = 1, pageSize = 25) {
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  return `${path}?${params.toString()}`;
+}
+
+export async function getActiveStaffPage(page = 1, pageSize = 25) {
+  const data = await apiRequest(pagedPath("/staff/active", page, pageSize));
+  return { items: (data.users || []).map(normalizeUser), pagination: data.pagination };
+}
+
+export async function getAgentsPage(page = 1, pageSize = 25) {
+  const data = await apiRequest(pagedPath("/agents", page, pageSize));
+  return { items: (data.users || []).map(normalizeUser), pagination: data.pagination };
+}
+
 export async function getArchivedStaff() {
   const data = await apiRequest("/staff/archived");
   return (data.users || []).map(normalizeUser);
@@ -226,6 +241,11 @@ export async function getCustomers() {
   return data.customers || [];
 }
 
+export async function getCustomersPage(page = 1, pageSize = 25) {
+  const data = await apiRequest(pagedPath("/customers", page, pageSize));
+  return { items: data.customers || [], pagination: data.pagination };
+}
+
 export async function createCustomer(payload) {
   const data = await apiRequest("/customers", {
     method: "POST",
@@ -266,6 +286,11 @@ export async function getCollections() {
   return data.collections || [];
 }
 
+export async function getCollectionsPage(page = 1, pageSize = 25) {
+  const data = await apiRequest(pagedPath("/collections", page, pageSize));
+  return { items: data.collections || [], pagination: data.pagination };
+}
+
 export async function createCollection(payload) {
   const data = await apiRequest("/collections", {
     method: "POST",
@@ -285,6 +310,28 @@ export async function updateCollectionReview(collectionId, payload) {
 export async function getAuditLogs() {
   const data = await apiRequest("/audit-logs");
   return data.logs || [];
+}
+
+export async function getAuditLogsPage(page = 1, pageSize = 25) {
+  const data = await apiRequest(pagedPath("/audit-logs", page, pageSize));
+  return { items: data.logs || [], pagination: data.pagination };
+}
+
+export async function getOwnerReconciliation() {
+  return apiRequest("/owner/reconciliation");
+}
+
+export async function getOwnerSessions(page = 1, pageSize = 25) {
+  const data = await apiRequest(pagedPath("/owner/sessions", page, pageSize));
+  return { items: data.sessions || [], pagination: data.pagination };
+}
+
+export async function revokeOwnerSession(sessionId) {
+  return apiRequest(`/owner/sessions/${encodeURIComponent(sessionId)}/revoke`, { method: "POST", body: {} });
+}
+
+export async function runRetentionCleanup() {
+  return apiRequest("/owner/retention/run", { method: "POST", body: {} });
 }
 
 export async function createAuditLog(payload) {

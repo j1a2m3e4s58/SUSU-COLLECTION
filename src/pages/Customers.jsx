@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { getCollections, getCustomerImports, getCustomers, getPortalSettings } from '@/api/portalClient';
+import { getCollections, getCustomerImports, getCustomersPage, getPortalSettings } from '@/api/portalClient';
+import PageControls from '@/components/PageControls';
 import ControlledSelect from '@/components/ui/controlled-select';
 import { CalendarDays, FileSpreadsheet, Pencil, Phone, Plus, RefreshCw, Search, UserX, Users } from 'lucide-react';
 import { useWorkDate } from '@/lib/WorkDateContext';
@@ -28,17 +29,20 @@ export default function Customers() {
   const [statusFilter, setStatusFilter] = useState('');
   const [showAdd, setShowAdd] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState(null);
 
   const fetchData = async () => {
     setLoading(true);
     try {
       const [customerData, collectionData, settings, imports] = await Promise.all([
-        getCustomers(),
+        getCustomersPage(page, 25),
         getCollections(),
         getPortalSettings(),
         getCustomerImports().catch(() => []),
       ]);
-      setCustomers(customerData || []);
+      setCustomers(customerData.items || []);
+      setPagination(customerData.pagination);
       setImportHistory(imports || []);
       setCollections(collectionData || []);
       setBranches(settings?.branches?.length ? settings.branches : defaultBranches);
@@ -46,7 +50,7 @@ export default function Customers() {
     setLoading(false);
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetchData(); }, [page]);
 
   const filtered = customers.filter((customer) => {
     if (canUseAgentScope && !selectedAgent) return false;
@@ -241,7 +245,8 @@ export default function Customers() {
             );
           })}
         </div>
-        {!loading && <p className="mt-3 px-3 text-xs text-muted-foreground">{filtered.length} active customer(s)</p>}
+        {!loading && <p className="mt-3 px-3 text-xs text-muted-foreground">{filtered.length} active customer(s) on this page</p>}
+        <PageControls pagination={pagination} onPageChange={setPage} />
       </div>}
 
       <section className="rounded-xl border border-border bg-card p-4 sm:p-5">

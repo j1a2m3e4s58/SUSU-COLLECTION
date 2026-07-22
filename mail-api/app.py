@@ -11,6 +11,7 @@ import smtplib
 import tempfile
 import threading
 import time
+import math
 from email.message import EmailMessage
 from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
 from urllib.request import Request, urlopen
@@ -96,6 +97,14 @@ DEFAULT_PORTAL_SETTINGS = {
     "sensitiveReauthMinutes": 15,
     "verificationMinutes": 15,
     "passwordResetMinutes": 30,
+    "auditRetentionDays": 2555,
+    "notificationRetentionDays": 90,
+    "verificationRetentionHours": 24,
+    "expiredSessionRetentionDays": 7,
+    "securityReviewStatus": "not-scheduled",
+    "securityReviewProvider": "",
+    "securityReviewReference": "",
+    "securityReviewDate": "",
     "dashboardLabel": "Dashboard",
     "trainingLabel": "",
     "formsLabel": "",
@@ -994,6 +1003,36 @@ def now_seconds() -> int:
     return int(time.time())
 
 
+def pagination_requested() -> bool:
+    return "page" in request.args or "pageSize" in request.args
+
+
+def paginate_items(items: list, *, default_page_size: int = 25, max_page_size: int = 100) -> tuple[list, dict]:
+    try:
+        page = max(1, int(request.args.get("page", 1) or 1))
+        page_size = int(request.args.get("pageSize", default_page_size) or default_page_size)
+    except (TypeError, ValueError):
+        page, page_size = 1, default_page_size
+    page_size = max(5, min(max_page_size, page_size))
+    total = len(items)
+    total_pages = max(1, math.ceil(total / page_size))
+    page = min(page, total_pages)
+    start = (page - 1) * page_size
+    return items[start:start + page_size], {
+        "page": page,
+        "pageSize": page_size,
+        "total": total,
+        "totalPages": total_pages,
+        "hasPrevious": page > 1,
+        "hasNext": page < total_pages,
+    }
+
+
+def paginated_response(key: str, items: list):
+    page_items, pagination = paginate_items(items)
+    return jsonify({key: page_items, "pagination": pagination})
+
+
 def legacy_hash_password(password: str) -> str:
     h = 0
     for char in password:
@@ -1785,6 +1824,14 @@ def load_portal_settings_store() -> dict:
         "sensitiveReauthMinutes": min(30, normalize_positive_number(raw.get("sensitiveReauthMinutes"), DEFAULT_PORTAL_SETTINGS["sensitiveReauthMinutes"])),
         "verificationMinutes": normalize_positive_number(raw.get("verificationMinutes"), DEFAULT_PORTAL_SETTINGS["verificationMinutes"]),
         "passwordResetMinutes": normalize_positive_number(raw.get("passwordResetMinutes"), DEFAULT_PORTAL_SETTINGS["passwordResetMinutes"]),
+        "auditRetentionDays": max(365, min(3650, normalize_positive_number(raw.get("auditRetentionDays"), DEFAULT_PORTAL_SETTINGS["auditRetentionDays"]))),
+        "notificationRetentionDays": max(7, min(365, normalize_positive_number(raw.get("notificationRetentionDays"), DEFAULT_PORTAL_SETTINGS["notificationRetentionDays"]))),
+        "verificationRetentionHours": max(1, min(168, normalize_positive_number(raw.get("verificationRetentionHours"), DEFAULT_PORTAL_SETTINGS["verificationRetentionHours"]))),
+        "expiredSessionRetentionDays": max(1, min(90, normalize_positive_number(raw.get("expiredSessionRetentionDays"), DEFAULT_PORTAL_SETTINGS["expiredSessionRetentionDays"]))),
+        "securityReviewStatus": str(raw.get("securityReviewStatus") or DEFAULT_PORTAL_SETTINGS["securityReviewStatus"]).strip().lower(),
+        "securityReviewProvider": str(raw.get("securityReviewProvider") or "").strip()[:160],
+        "securityReviewReference": str(raw.get("securityReviewReference") or "").strip()[:240],
+        "securityReviewDate": str(raw.get("securityReviewDate") or "").strip()[:10],
         "dashboardLabel": str(raw.get("dashboardLabel") or DEFAULT_PORTAL_SETTINGS["dashboardLabel"]),
         "trainingLabel": str(raw.get("trainingLabel") or DEFAULT_PORTAL_SETTINGS["trainingLabel"]),
         "formsLabel": str(raw.get("formsLabel") or DEFAULT_PORTAL_SETTINGS["formsLabel"]),
@@ -2175,6 +2222,9 @@ def load_sessions() -> dict[str, dict]:
             "absoluteExpiresAt": absolute_expires_at,
             "lastActivityAt": last_activity_at,
             "recentAuthAt": recent_auth_at,
+            "createdAt": int(item.get("createdAt", last_activity_at) or last_activity_at),
+            "ipAddress": str(item.get("ipAddress", "unknown") or "unknown")[:80],
+            "userAgent": str(item.get("userAgent", "Unknown device") or "Unknown device")[:300],
         }
     return sessions
 
@@ -2202,6 +2252,9 @@ def issue_session(user_id: str) -> str:
         "absoluteExpiresAt": current + int(settings["absoluteSessionHours"]) * 60 * 60,
         "lastActivityAt": current,
         "recentAuthAt": current,
+        "createdAt": current,
+        "ipAddress": request_ip_address() if has_request_context() else "system",
+        "userAgent": str(request.headers.get("User-Agent", "Unknown device") or "Unknown device")[:300] if has_request_context() else "System test client",
     }
     save_sessions(sessions)
     return token
@@ -2287,6 +2340,109 @@ def revoke_user_sessions(user_id: str) -> None:
     if filtered != sessions:
         save_sessions(filtered)
     revoke_user_trusted_devices(user_id)
+
+
+_RETENTION_LOCK = threading.Lock()
+_LAST_RETENTION_RUN = 0
+
+
+def apply_retention_rules() -> dict:
+    settings = load_portal_settings_store()
+    now_s = now_seconds()
+    now_millis = now_ms()
+    summary = {}
+
+    audit_items = load_audit_logs_store()
+    audit_cutoff = now_millis - int(settings["auditRetentionDays"]) * 86400000
+    kept_audits = [item for item in audit_items if int(item.get("timestamp", 0) or 0) >= audit_cutoff]
+    summary["auditLogs"] = len(audit_items) - len(kept_audits)
+    if len(kept_audits) != len(audit_items):
+        save_audit_logs_store(kept_audits)
+
+    notifications = load_json_list_store(NOTIFICATIONS_STORE_PATH)
+    notification_cutoff = now_millis - int(settings["notificationRetentionDays"]) * 86400000
+    kept_notifications = [
+        item for item in notifications
+        if not bool(item.get("isRead", False))
+        or int(item.get("createdAt", 0) or 0) >= notification_cutoff
+    ]
+    summary["notifications"] = len(notifications) - len(kept_notifications)
+    if len(kept_notifications) != len(notifications):
+        save_json_list_store(NOTIFICATIONS_STORE_PATH, kept_notifications)
+
+    verification_grace = int(settings["verificationRetentionHours"]) * 3600
+    token_paths = [
+        PENDING_VERIFICATIONS_PATH,
+        RESET_TOKENS_PATH,
+        AGENT_SETUP_TOKENS_PATH,
+        PRIVILEGED_MFA_PATH,
+        PORTAL_AUTHORIZATIONS_PATH,
+    ]
+    removed_tokens = 0
+    for path in token_paths:
+        raw = read_json_file(path, {})
+        if not isinstance(raw, dict):
+            continue
+        kept = {
+            key: value for key, value in raw.items()
+            if isinstance(value, dict)
+            and int(value.get("expiresAt", 0) or 0) + verification_grace >= now_s
+        }
+        removed_tokens += len(raw) - len(kept)
+        if len(kept) != len(raw):
+            atomic_write_json(path, kept)
+    summary["verificationRecords"] = removed_tokens
+
+    raw_sessions = read_json_file(SESSIONS_STORE_PATH, {})
+    session_grace = int(settings["expiredSessionRetentionDays"]) * 86400
+    if isinstance(raw_sessions, dict):
+        kept_sessions = {
+            key: value for key, value in raw_sessions.items()
+            if isinstance(value, dict)
+            and int(value.get("absoluteExpiresAt", value.get("expiresAt", 0)) or 0) + session_grace >= now_s
+        }
+        summary["sessions"] = len(raw_sessions) - len(kept_sessions)
+        if len(kept_sessions) != len(raw_sessions):
+            save_sessions(kept_sessions)
+    else:
+        summary["sessions"] = 0
+    summary["completedAt"] = now_millis
+    return summary
+
+
+@app.before_request
+def run_periodic_retention_cleanup():
+    global _LAST_RETENTION_RUN
+    current = now_seconds()
+    if current - _LAST_RETENTION_RUN < 6 * 3600:
+        return None
+    if not _RETENTION_LOCK.acquire(blocking=False):
+        return None
+    try:
+        if current - _LAST_RETENTION_RUN >= 6 * 3600:
+            apply_retention_rules()
+            _LAST_RETENTION_RUN = current
+    except Exception:
+        app.logger.exception("Retention cleanup failed")
+    finally:
+        _RETENTION_LOCK.release()
+    return None
+
+
+@app.route("/api/owner/retention/run", methods=["POST", "OPTIONS"])
+def owner_run_retention():
+    preflight = handle_options()
+    if preflight:
+        return preflight
+    session_token, auth_user, error = require_owner_admin()
+    if error:
+        return error
+    reauth_error = recent_reauthentication_error(session_token)
+    if reauth_error:
+        return reauth_error
+    summary = apply_retention_rules()
+    record_audit_log(auth_user, "RUN_RETENTION_CLEANUP", summary)
+    return jsonify({"ok": True, "summary": summary})
 
 def require_authenticated_user():
     token = parse_session_token()
@@ -2842,6 +2998,13 @@ def production_status():
         return error
     test_staff_count = sum(1 for item in load_user_store() if bool(item.get("isTestData")))
     test_customer_count = sum(1 for item in load_json_list_store(CUSTOMERS_STORE_PATH) if bool(item.get("isTestData")))
+    settings = load_portal_settings_store()
+    security_review_complete = (
+        settings.get("securityReviewStatus") == "completed"
+        and bool(settings.get("securityReviewProvider"))
+        and bool(settings.get("securityReviewReference"))
+        and bool(settings.get("securityReviewDate"))
+    )
     checks = {
         "database": {
             "ok": pg_enabled(),
@@ -2867,8 +3030,12 @@ def production_status():
             "ok": test_staff_count == 0 and test_customer_count == 0,
             "label": f"Test data removed ({test_staff_count} staff, {test_customer_count} customers remaining)",
         },
+        "independentSecurityReview": {
+            "ok": security_review_complete,
+            "label": "Independent security review completed with evidence",
+        },
     }
-    required = ["database", "portalPublicUrl", "mail", "monitoring", "testDataRemoved"]
+    required = ["database", "portalPublicUrl", "mail", "monitoring", "testDataRemoved", "independentSecurityReview"]
     live_ready = all(checks[key]["ok"] for key in required)
     return jsonify({
         "storageBackend": "postgres" if pg_enabled() else "json-file",
@@ -3074,6 +3241,8 @@ def get_audit_logs():
         key=lambda item: int(item["timestamp"]),
         reverse=True,
     )
+    if pagination_requested():
+        return paginated_response("logs", logs)
     return jsonify({"logs": logs})
 
 
@@ -3281,6 +3450,9 @@ def update_portal_settings():
             return backup_error
     rename_summary = apply_portal_renames(branch_renames, department_renames)
     normalized_susu_users = persist_normalized_susu_departments()
+    review_status = str(data.get("securityReviewStatus") or "not-scheduled").strip().lower()
+    if review_status not in {"not-scheduled", "scheduled", "in-progress", "completed", "remediation-required"}:
+        return jsonify({"error": "Security review status is invalid."}), 400
     settings = {
         "bankName": str(data.get("bankName") or DEFAULT_PORTAL_SETTINGS["bankName"]).strip(),
         "shortBankName": str(data.get("shortBankName") or DEFAULT_PORTAL_SETTINGS["shortBankName"]).strip(),
@@ -3302,6 +3474,14 @@ def update_portal_settings():
         "sensitiveReauthMinutes": min(30, normalize_positive_number(data.get("sensitiveReauthMinutes"), DEFAULT_PORTAL_SETTINGS["sensitiveReauthMinutes"])),
         "verificationMinutes": normalize_positive_number(data.get("verificationMinutes"), DEFAULT_PORTAL_SETTINGS["verificationMinutes"]),
         "passwordResetMinutes": normalize_positive_number(data.get("passwordResetMinutes"), DEFAULT_PORTAL_SETTINGS["passwordResetMinutes"]),
+        "auditRetentionDays": max(365, min(3650, normalize_positive_number(data.get("auditRetentionDays"), DEFAULT_PORTAL_SETTINGS["auditRetentionDays"]))),
+        "notificationRetentionDays": max(7, min(365, normalize_positive_number(data.get("notificationRetentionDays"), DEFAULT_PORTAL_SETTINGS["notificationRetentionDays"]))),
+        "verificationRetentionHours": max(1, min(168, normalize_positive_number(data.get("verificationRetentionHours"), DEFAULT_PORTAL_SETTINGS["verificationRetentionHours"]))),
+        "expiredSessionRetentionDays": max(1, min(90, normalize_positive_number(data.get("expiredSessionRetentionDays"), DEFAULT_PORTAL_SETTINGS["expiredSessionRetentionDays"]))),
+        "securityReviewStatus": review_status,
+        "securityReviewProvider": str(data.get("securityReviewProvider") or "").strip()[:160],
+        "securityReviewReference": str(data.get("securityReviewReference") or "").strip()[:240],
+        "securityReviewDate": str(data.get("securityReviewDate") or "").strip()[:10],
         "dashboardLabel": str(data.get("dashboardLabel") or DEFAULT_PORTAL_SETTINGS["dashboardLabel"]),
         "trainingLabel": str(data.get("trainingLabel") or DEFAULT_PORTAL_SETTINGS["trainingLabel"]),
         "formsLabel": str(data.get("formsLabel") or DEFAULT_PORTAL_SETTINGS["formsLabel"]),
@@ -3387,6 +3567,148 @@ def normalize_stored_susu_departments():
         "migratedRecords": migrated_records,
         "settings": public_portal_settings(settings),
     })
+
+
+def reconciliation_snapshot() -> dict:
+    customers = load_json_list_store(CUSTOMERS_STORE_PATH)
+    collections = load_json_list_store(COLLECTIONS_STORE_PATH)
+    closes = load_json_list_store(DAILY_CLOSES_STORE_PATH)
+    completed = [
+        item for item in collections
+        if str(item.get("status", "completed")).strip().lower() not in {"reversed", "rejected"}
+    ]
+    collection_by_customer = {}
+    for item in completed:
+        customer_id = str(item.get("customer_id", "")).strip()
+        collection_by_customer[customer_id] = round(
+            collection_by_customer.get(customer_id, 0.0) + float(item.get("amount") or 0), 2
+        )
+    issues = []
+    customer_ids = {str(item.get("id", "")).strip() for item in customers}
+    for customer in customers:
+        customer_id = str(customer.get("id", "")).strip()
+        stored = round(float(customer.get("total_deposits") or 0), 2)
+        calculated = round(collection_by_customer.get(customer_id, 0.0), 2)
+        if stored != calculated:
+            issues.append({
+                "type": "CUSTOMER_TOTAL_MISMATCH",
+                "customerId": customer_id,
+                "accountNumber": str(customer.get("account_number", "")),
+                "stored": stored,
+                "calculated": calculated,
+                "difference": round(stored - calculated, 2),
+            })
+    orphaned = [item for item in completed if str(item.get("customer_id", "")).strip() not in customer_ids]
+    for item in orphaned:
+        issues.append({
+            "type": "ORPHANED_DEPOSIT",
+            "collectionId": str(item.get("id", "")),
+            "reference": str(item.get("transaction_reference", "")),
+            "amount": round(float(item.get("amount") or 0), 2),
+        })
+    for close in closes:
+        agent_id = str(close.get("agentId", "")).strip()
+        date_key = str(close.get("date", "")).strip()
+        matching = [
+            item for item in completed
+            if str(item.get("agent_id", "")).strip() == agent_id
+            and str(item.get("transaction_date", "")).strip() == date_key
+        ]
+        calculated_total = round(sum(float(item.get("amount") or 0) for item in matching), 2)
+        stored_total = round(float(close.get("totalAmount") or 0), 2)
+        stored_count = int(close.get("transactionCount", 0) or 0)
+        if stored_total != calculated_total or stored_count != len(matching):
+            issues.append({
+                "type": "DAILY_CLOSE_MISMATCH",
+                "closeId": str(close.get("id", "")),
+                "agentId": agent_id,
+                "date": date_key,
+                "storedTotal": stored_total,
+                "calculatedTotal": calculated_total,
+                "storedCount": stored_count,
+                "calculatedCount": len(matching),
+            })
+    deposit_total = round(sum(float(item.get("amount") or 0) for item in completed), 2)
+    customer_total = round(sum(float(item.get("total_deposits") or 0) for item in customers), 2)
+    return {
+        "ok": not issues and deposit_total == customer_total,
+        "generatedAt": now_ms(),
+        "summary": {
+            "customers": len(customers),
+            "deposits": len(completed),
+            "dailyCloses": len(closes),
+            "depositTotal": deposit_total,
+            "customerTotal": customer_total,
+            "reportTotal": deposit_total,
+            "difference": round(customer_total - deposit_total, 2),
+            "issueCount": len(issues),
+        },
+        "issues": issues,
+    }
+
+
+@app.route("/api/owner/reconciliation", methods=["GET"])
+def owner_reconciliation():
+    _, auth_user, error = require_owner_admin()
+    if error:
+        return error
+    result = reconciliation_snapshot()
+    record_audit_log(auth_user, "RUN_RECONCILIATION", {"issueCount": result["summary"]["issueCount"]})
+    return jsonify(result)
+
+
+def session_device_label(user_agent: str) -> str:
+    value = str(user_agent or "Unknown device")
+    browser = next((name for token, name in [("Edg/", "Edge"), ("Chrome/", "Chrome"), ("Firefox/", "Firefox"), ("Safari/", "Safari")] if token in value), "Browser")
+    platform = next((name for token, name in [("Android", "Android"), ("iPhone", "iPhone"), ("iPad", "iPad"), ("Windows", "Windows"), ("Macintosh", "macOS"), ("Linux", "Linux")] if token in value), "Unknown device")
+    return f"{browser} on {platform}"
+
+
+@app.route("/api/owner/sessions", methods=["GET"])
+def owner_sessions():
+    current_token, _, error = require_owner_admin()
+    if error:
+        return error
+    users = {str(item.get("id")): item for item in load_user_store()}
+    current_hash = session_token_hash(current_token)
+    sessions = []
+    for token_hash, item in load_sessions().items():
+        user = users.get(str(item.get("userId")), {})
+        sessions.append({
+            "id": token_hash,
+            "userId": str(item.get("userId", "")),
+            "userName": str(user.get("fullname", "Unknown user")),
+            "email": str(user.get("email", "")),
+            "role": str(user.get("role", "")),
+            "device": session_device_label(item.get("userAgent", "")),
+            "ipAddress": str(item.get("ipAddress", "unknown")),
+            "createdAt": int(item.get("createdAt", 0) or 0) * 1000,
+            "lastActivityAt": int(item.get("lastActivityAt", 0) or 0) * 1000,
+            "expiresAt": int(item.get("absoluteExpiresAt", 0) or 0) * 1000,
+            "isCurrent": token_hash == current_hash,
+        })
+    sessions.sort(key=lambda item: item["lastActivityAt"], reverse=True)
+    if pagination_requested():
+        return paginated_response("sessions", sessions)
+    return jsonify({"sessions": sessions})
+
+
+@app.route("/api/owner/sessions/<session_id>/revoke", methods=["POST", "OPTIONS"])
+def owner_revoke_session(session_id: str):
+    preflight = handle_options()
+    if preflight:
+        return preflight
+    current_token, auth_user, error = require_owner_admin()
+    if error:
+        return error
+    sessions = load_sessions()
+    session = sessions.pop(str(session_id).strip(), None)
+    if not session:
+        return jsonify({"error": "Active session not found"}), 404
+    save_sessions(sessions)
+    record_audit_log(auth_user, "REVOKE_DEVICE_SESSION", {"staffId": session.get("userId"), "sessionId": str(session_id)[:12]})
+    response = jsonify({"ok": True, "revokedCurrent": session_token_hash(current_token) == session_id})
+    return clear_session_cookie(response) if session_token_hash(current_token) == session_id else response
 
 
 @app.route("/api/backup/export", methods=["GET"])
@@ -3876,6 +4198,8 @@ def get_customers():
     customers = load_json_list_store(CUSTOMERS_STORE_PATH)
     customers = [item for item in customers if can_view_operational_record(auth_user, item)]
     customers.sort(key=lambda item: int(item.get("createdAt", 0) or 0), reverse=True)
+    if pagination_requested():
+        return paginated_response("customers", customers)
     return jsonify({"customers": customers})
 
 
@@ -4319,6 +4643,8 @@ def get_collections():
     collections = load_json_list_store(COLLECTIONS_STORE_PATH)
     collections = [item for item in collections if can_view_operational_record(auth_user, item)]
     collections.sort(key=lambda item: int(item.get("created_date", 0) or 0), reverse=True)
+    if pagination_requested():
+        return paginated_response("collections", collections)
     return jsonify({"collections": collections})
 
 
@@ -4664,7 +4990,31 @@ def get_active_staff():
         and user["fullname"] not in {"MASTER ADMIN", "System Admin"}
         and user["role"] != OWNER_ADMIN_ROLE
     ]
-    return jsonify({"users": serialize_users_with_presence(active_users)})
+    serialized = serialize_users_with_presence(active_users)
+    if pagination_requested():
+        return paginated_response("users", serialized)
+    return jsonify({"users": serialized})
+
+
+@app.route("/api/agents", methods=["GET"])
+def get_agents():
+    _, auth_user, error = require_authenticated_user()
+    if error:
+        return error
+    if not can_manage_agents_and_customers(auth_user):
+        return jsonify({"error": "Only supervisors or owner admin can view agent management."}), 403
+    users = [
+        user for user in load_user_store()
+        if is_susu_agent(user)
+        and user.get("isActive")
+        and not user.get("isArchived")
+        and can_view_staff_record(auth_user, user)
+    ]
+    users.sort(key=lambda item: str(item.get("fullname", "")).lower())
+    serialized = serialize_users_with_presence(users)
+    if pagination_requested():
+        return paginated_response("users", serialized)
+    return jsonify({"users": serialized})
 
 
 @app.route("/api/staff/archived", methods=["GET"])

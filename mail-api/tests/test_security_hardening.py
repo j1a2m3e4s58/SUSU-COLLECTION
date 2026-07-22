@@ -981,3 +981,96 @@ def test_postgresql_schema_integration_when_test_database_is_configured(monkeypa
         with conn.cursor() as cur:
             cur.execute("SELECT to_regclass('public.susu_deposit_guards')")
             assert cur.fetchone()[0] == "susu_deposit_guards"
+
+
+def test_paginated_financial_and_staff_endpoints(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    owner = app_module.load_user_store()[0]
+    client = app_module.app.test_client()
+    headers = auth_headers(app_module, owner["id"])
+    app_module.save_json_list_store(app_module.CUSTOMERS_STORE_PATH, [
+        {
+            "id": f"customer-{index}",
+            "account_name": f"Customer {index}",
+            "account_number": f"13100001{index:05d}",
+            "branch_name": "HEAD OFFICE",
+            "customer_status": "active",
+            "createdAt": index,
+        }
+        for index in range(30)
+    ])
+    response = client.get("/api/customers?page=2&pageSize=10", headers=headers)
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert len(payload["customers"]) == 10
+    assert payload["pagination"] == {
+        "page": 2,
+        "pageSize": 10,
+        "total": 30,
+        "totalPages": 3,
+        "hasPrevious": True,
+        "hasNext": True,
+    }
+
+
+def test_owner_reconciliation_detects_customer_and_close_mismatches(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    owner = app_module.load_user_store()[0]
+    client = app_module.app.test_client()
+    headers = auth_headers(app_module, owner["id"])
+    app_module.save_json_list_store(app_module.CUSTOMERS_STORE_PATH, [{
+        "id": "customer-1", "account_number": "1310000100001", "branch_name": "HEAD OFFICE",
+        "customer_status": "active", "total_deposits": 20,
+    }])
+    app_module.save_json_list_store(app_module.COLLECTIONS_STORE_PATH, [{
+        "id": "collection-1", "customer_id": "customer-1", "account_number": "1310000100001",
+        "amount": 10, "agent_id": "agent-1", "branch_name": "HEAD OFFICE",
+        "transaction_date": "2026-07-22", "transaction_reference": "SUSU-TEST-1", "status": "completed",
+    }])
+    app_module.save_json_list_store(app_module.DAILY_CLOSES_STORE_PATH, [{
+        "id": "close-1", "agentId": "agent-1", "date": "2026-07-22",
+        "transactionCount": 2, "totalAmount": 25,
+    }])
+    response = client.get("/api/owner/reconciliation", headers=headers)
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["ok"] is False
+    assert {item["type"] for item in payload["issues"]} == {"CUSTOMER_TOTAL_MISMATCH", "DAILY_CLOSE_MISMATCH"}
+
+
+def test_owner_can_list_and_revoke_one_device_session(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    owner = app_module.load_user_store()[0]
+    client = app_module.app.test_client()
+    current_token = app_module.issue_session(owner["id"])
+    other_token = app_module.issue_session(owner["id"])
+    headers = {"Authorization": f"Bearer {current_token}"}
+    listed = client.get("/api/owner/sessions", headers=headers)
+    assert listed.status_code == 200
+    sessions = listed.get_json()["sessions"]
+    other_id = next(item["id"] for item in sessions if item["id"] == app_module.session_token_hash(other_token))
+    revoked = client.post(f"/api/owner/sessions/{other_id}/revoke", headers=headers)
+    assert revoked.status_code == 200
+    assert app_module.session_token_hash(other_token) not in app_module.load_sessions()
+    assert app_module.session_token_hash(current_token) in app_module.load_sessions()
+
+
+def test_retention_cleanup_keeps_unread_notifications_and_removes_expired_records(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    old_ms = app_module.now_ms() - 4000 * 86400000
+    app_module.save_audit_logs_store([{
+        "id": 1, "actorId": "system", "actorName": "System", "action": "OLD_EVENT",
+        "target": "old", "ipAddress": "system", "timestamp": old_ms,
+    }])
+    app_module.save_json_list_store(app_module.NOTIFICATIONS_STORE_PATH, [
+        {"id": 1, "userId": "owner-admin-1", "createdAt": old_ms, "isRead": True},
+        {"id": 2, "userId": "owner-admin-1", "createdAt": old_ms, "isRead": False},
+    ])
+    app_module.atomic_write_json(app_module.PENDING_VERIFICATIONS_PATH, {
+        "expired@example.test": {"expiresAt": 1},
+    })
+    summary = app_module.apply_retention_rules()
+    assert summary["auditLogs"] == 1
+    assert summary["notifications"] == 1
+    assert summary["verificationRecords"] >= 1
+    assert [item["id"] for item in app_module.load_json_list_store(app_module.NOTIFICATIONS_STORE_PATH)] == [2]

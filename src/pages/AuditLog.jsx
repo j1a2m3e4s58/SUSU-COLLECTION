@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { deleteAuditLog, deleteAuditLogs, exportBackup, getAuditLogs } from '@/api/portalClient';
+import { deleteAuditLog, deleteAuditLogs, exportBackup, getAuditLogsPage } from '@/api/portalClient';
+import PageControls from '@/components/PageControls';
 import ControlledSelect from '@/components/ui/controlled-select';
 import { useAuth } from '@/lib/AuthContext';
 import { exportHtmlPdf } from '@/lib/pdfExport';
@@ -21,19 +22,23 @@ export default function AuditLog() {
   const [detailTarget, setDetailTarget] = useState(null);
   const [deleteBackupReady, setDeleteBackupReady] = useState(false);
   const [exportingBackup, setExportingBackup] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState(null);
 
   const fetchLogs = async () => {
     setLoading(true);
     setError('');
     try {
-      setLogs(await getAuditLogs());
+      const result = await getAuditLogsPage(page, 25);
+      setLogs(result.items);
+      setPagination(result.pagination);
     } catch (err) {
       setError(err.message || 'Could not load audit logs.');
     }
     setLoading(false);
   };
 
-  useEffect(() => { fetchLogs(); }, []);
+  useEffect(() => { fetchLogs(); }, [page]);
 
   const actions = useMemo(() => [...new Set(logs.map((item) => item.action))].filter(Boolean), [logs]);
   const summarizeTarget = (target) => {
@@ -318,6 +323,7 @@ export default function AuditLog() {
           ))}
         </div>
         {!loading && <p className="text-xs text-muted-foreground mt-3 px-3">{filtered.length} of {logs.length} log entries</p>}
+        <PageControls pagination={pagination} onPageChange={setPage} />
       </div>
 
       {confirmDelete && (

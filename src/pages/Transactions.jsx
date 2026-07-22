@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { getCollections, getPortalSettings, updateCollectionReview } from '@/api/portalClient';
+import { getCollectionsPage, getPortalSettings, updateCollectionReview } from '@/api/portalClient';
+import PageControls from '@/components/PageControls';
 import ControlledSelect from '@/components/ui/controlled-select';
 import { useAgentScope } from '@/lib/AgentScopeContext';
 import { useAuth } from '@/lib/AuthContext';
@@ -36,15 +37,17 @@ export default function Transactions() {
   const [reviewNote, setReviewNote] = useState('');
   const [reviewSaving, setReviewSaving] = useState(false);
   const [error, setError] = useState('');
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState(null);
   const canReviewTransactions = user?.role === 'OwnerAdmin' || user?.role === 'Supervisor';
 
   useEffect(() => {
     Promise.all([
-      getCollections(),
+      getCollectionsPage(page, 25),
       getPortalSettings(),
-    ]).then(([c, b]) => { setCollections(c || []); setBranches(b?.branches || []); setLoading(false); })
+    ]).then(([c, b]) => { setCollections(c.items || []); setPagination(c.pagination); setBranches(b?.branches || []); setLoading(false); })
       .catch(() => setLoading(false));
-  }, []);
+  }, [page]);
 
   useEffect(() => {
     const date = searchParams.get('date') || '';
@@ -256,6 +259,7 @@ export default function Transactions() {
           ))}
         </div>
         {!loading && <p className="text-xs text-muted-foreground mt-3 px-3">{filtered.length} transactions - Total GHS {totalAmount.toLocaleString()}</p>}
+        <PageControls pagination={pagination} onPageChange={setPage} />
       </div>
         </>
       )}

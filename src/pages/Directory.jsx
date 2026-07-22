@@ -18,12 +18,13 @@ import {
   archiveStaff,
   deleteStaff,
   exportBackup,
-  getActiveStaff,
+  getActiveStaffPage,
   getPortalSettings,
   resetStaffEmailLogin,
   resolveAssetUrl,
   updateStaff,
 } from "@/api/portalClient";
+import PageControls from "@/components/PageControls";
 import { useAuth } from "@/lib/AuthContext";
 import { Archive, Building2, KeyRound, Loader2, Mail, MapPin, Phone, Search, ShieldCheck, Trash2, UserX, Users } from "lucide-react";
 
@@ -173,16 +174,19 @@ export default function Directory() {
   const [resetTarget, setResetTarget] = useState(null);
   const [resetPassword, setResetPassword] = useState("");
   const [resettingLogin, setResettingLogin] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState(null);
 
   useEffect(() => {
     let mounted = true;
 
     const load = async () => {
       try {
-        const [settings, users] = await Promise.all([getPortalSettings(), getActiveStaff()]);
+        const [settings, staffPage] = await Promise.all([getPortalSettings(), getActiveStaffPage(page, 24)]);
         if (!mounted) return;
         setBranches(settings.branches || []);
-        setStaff((users || []).filter((member) => member.role !== "OwnerAdmin"));
+        setStaff((staffPage.items || []).filter((member) => member.role !== "OwnerAdmin"));
+        setPagination(staffPage.pagination);
         setError("");
       } catch (err) {
         if (mounted) setError(err.message || "Could not load staff directory");
@@ -197,7 +201,7 @@ export default function Directory() {
       mounted = false;
       window.clearInterval(intervalId);
     };
-  }, []);
+  }, [page]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -592,6 +596,7 @@ export default function Directory() {
               </div>
             </section>
           ))}
+          <PageControls pagination={pagination} onPageChange={setPage} />
         </div>
       )}
 

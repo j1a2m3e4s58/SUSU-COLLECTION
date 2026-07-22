@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { createAgentAccount, deleteStaff, exportBackup, getActiveStaff, getCollections, getCustomerImports, getPortalSettings, importCustomers, reopenDailyCollections, resetAgentPassword, updateStaff } from '@/api/portalClient';
+import { createAgentAccount, deleteStaff, exportBackup, getAgentsPage, getCollections, getCustomerImports, getPortalSettings, importCustomers, reopenDailyCollections, resetAgentPassword, updateStaff } from '@/api/portalClient';
+import PageControls from '@/components/PageControls';
 import ControlledSelect from '@/components/ui/controlled-select';
 import { useAuth } from '@/lib/AuthContext';
 import { useWorkDate } from '@/lib/WorkDateContext';
@@ -39,6 +40,8 @@ export default function AgentManagement() {
   const [importFileName, setImportFileName] = useState('');
   const [importSummary, setImportSummary] = useState(null);
   const [importHistory, setImportHistory] = useState([]);
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState(null);
 
   const isOwner = user?.role === 'OwnerAdmin';
   const supervisorBranches = Array.isArray(user?.managedBranches) && user.managedBranches.length
@@ -54,7 +57,7 @@ export default function AgentManagement() {
     setLoading(true);
     try {
       const [s, b, c, imports] = await Promise.all([
-      getActiveStaff(),
+      getAgentsPage(page, 25),
       getPortalSettings(),
       getCollections(),
       getCustomerImports().catch(() => []),
@@ -66,10 +69,11 @@ export default function AgentManagement() {
         : nextBranches.filter((branch) => supervisorBranches.includes(branch));
       setImportBranch((current) => current || allowed[0] || '');
       setAgentForm((current) => ({ ...current, branch: current.branch || allowed[0] || '' }));
-      setStaff((s || []).filter(x =>
+      setStaff((s.items || []).filter(x =>
         isSusuAgentStaff(x) &&
         (isOwner || supervisorBranches.includes(x.branch || x.branch_name))
       ));
+      setPagination(s.pagination);
       setCollections(c || []);
       setImportHistory(imports || []);
     } finally {
@@ -77,7 +81,7 @@ export default function AgentManagement() {
     }
   };
 
-  useEffect(() => { refreshData().catch(() => setLoading(false)); }, [user?.id]);
+  useEffect(() => { refreshData().catch(() => setLoading(false)); }, [user?.id, page]);
 
   const filtered = staff.filter(s => {
     const q = search.toLowerCase().trim();
@@ -487,6 +491,7 @@ export default function AgentManagement() {
             );
           })}
         </div>
+        <PageControls pagination={pagination} onPageChange={setPage} />
       </div>
 
       <section className="rounded-xl border border-border bg-card p-4">
