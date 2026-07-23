@@ -28,7 +28,7 @@ import {
   updatePortalSettings,
 } from "@/api/portalClient";
 import { useAuth } from "@/lib/AuthContext";
-import { Building2, Download, ListPlus, Pencil, Plus, RotateCcw, Save, Settings2, Trash2, Upload, UserMinus, UserPlus, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Building2, Download, FileSpreadsheet, ListPlus, Pencil, Plus, RotateCcw, Save, Settings2, Trash2, Upload, UserMinus, UserPlus, X } from "lucide-react";
 
 const listControls = [
   ["branches", "Branches", "Branch", "Add branch name", []],
@@ -292,6 +292,64 @@ function ListEditor({
   );
 }
 
+function ImportColumnsEditor({ columns, onChange }) {
+  const items = Array.isArray(columns) ? columns : [];
+  const protectedKeys = new Set(["account_name", "account_number"]);
+  const updateLabel = (key, label) => onChange(items.map((item) => item.key === key ? { ...item, label } : item));
+  const addColumn = () => {
+    const used = new Set(items.map((item) => String(item.label || "").toLowerCase()));
+    let index = items.length + 1;
+    let label = `Additional Column ${index}`;
+    while (used.has(label.toLowerCase())) {
+      index += 1;
+      label = `Additional Column ${index}`;
+    }
+    onChange([...items, { key: `custom_${Date.now().toString(36)}`, label, type: "text", required: false }]);
+  };
+  const move = (index, offset) => {
+    const target = index + offset;
+    if (target < 0 || target >= items.length) return;
+    const next = [...items];
+    [next[index], next[target]] = [next[target], next[index]];
+    onChange(next);
+  };
+  const remove = (key) => {
+    if (!protectedKeys.has(key)) onChange(items.filter((item) => item.key !== key));
+  };
+
+  return (
+    <section className="rounded-xl border border-border bg-card p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="flex items-center gap-2 font-heading text-lg font-bold text-foreground"><FileSpreadsheet className="h-5 w-5 text-emerald-600" />Customer Import Format</h2>
+          <p className="mt-1 text-sm text-muted-foreground">These titles and their order are used in the downloadable Excel template and customer importer.</p>
+        </div>
+        <Button type="button" size="sm" className="gap-2" onClick={addColumn} disabled={items.length >= 20}><Plus className="h-4 w-4" /> Add Column</Button>
+      </div>
+      <div className="mt-4 space-y-2">
+        {items.map((column, index) => (
+          <div key={column.key} className="grid gap-2 rounded-lg border border-border bg-background/60 p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+            <div className="min-w-0">
+              <Label htmlFor={`import-column-${column.key}`} className="mb-1.5 flex items-center gap-2 text-xs">
+                Column {index + 1}
+                {protectedKeys.has(column.key) && <Badge variant="secondary">Required</Badge>}
+                {column.type === "account_number" && <Badge>Text · 13 digits</Badge>}
+              </Label>
+              <Input id={`import-column-${column.key}`} value={column.label || ""} maxLength={60} onChange={(event) => updateLabel(column.key, event.target.value)} aria-label={`Column ${index + 1} title`} />
+            </div>
+            <div className="grid grid-cols-3 gap-1 sm:flex sm:items-center">
+              <Button type="button" variant="ghost" size="sm" onClick={() => move(index, -1)} disabled={index === 0} title="Move up" aria-label={`Move ${column.label} up`}><ArrowUp className="h-4 w-4" /></Button>
+              <Button type="button" variant="ghost" size="sm" onClick={() => move(index, 1)} disabled={index === items.length - 1} title="Move down" aria-label={`Move ${column.label} down`}><ArrowDown className="h-4 w-4" /></Button>
+              <Button type="button" variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => remove(column.key)} disabled={protectedKeys.has(column.key)} title={protectedKeys.has(column.key) ? "Required banking column" : "Remove column"} aria-label={`Remove ${column.label}`}><Trash2 className="h-4 w-4" /></Button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="mt-3 text-xs text-muted-foreground">Account Name and Account Number cannot be removed. Branch is optional because the selected import branch can be applied to every uploaded row.</p>
+    </section>
+  );
+}
+
 export default function PortalControl() {
   const { refreshPortalSettings } = useAuth();
   const [settings, setSettings] = useState(null);
@@ -375,6 +433,16 @@ export default function PortalControl() {
       setError("Open Portal Control from the sidebar and enter the password first.");
       return;
     }
+    const importColumns = Array.isArray(draft.customerImportColumns) ? draft.customerImportColumns : [];
+    const importLabels = importColumns.map((item) => String(item.label || "").trim());
+    if (importLabels.some((label) => !label)) {
+      setError("Every customer import column must have a title.");
+      return;
+    }
+    if (new Set(importLabels.map((label) => label.toLowerCase())).size !== importLabels.length) {
+      setError("Customer import column titles must be unique.");
+      return;
+    }
     if (hasDangerousListChanges() && !clearBackupReady) {
       setError("Export Backup before renaming or removing any branch or department.");
       return;
@@ -406,11 +474,9 @@ export default function PortalControl() {
       departments: ["SUSU"],
       branchRenames: pendingRenames.branches,
       departmentRenames: pendingRenames.departments,
-      formCategories: [],
-      departmentChangeTypes: [],
-      transferLocations: [],
       appMode: draft.appMode === "live" ? "live" : "test",
       publicRegistrationEnabled: draft.publicRegistrationEnabled === true,
+      customerImportColumns: importColumns,
       backupConfirmed: clearBackupReady,
     };
 
@@ -821,6 +887,21 @@ export default function PortalControl() {
               <Label>{label}</Label>
               <Input value={draft[key] || ""} onChange={(event) => update(key, event.target.value)} />
             </div>
+          ))}
+        </div>
+      </section>
+
+      <ImportColumnsEditor
+        columns={draft.customerImportColumns || []}
+        onChange={(columns) => update("customerImportColumns", columns)}
+      />
+
+      <section className="rounded-xl border border-blue-500/20 bg-blue-500/10 p-5">
+        <h2 className="font-heading text-base font-bold text-foreground">System-managed safeguards</h2>
+        <p className="mt-1 text-sm text-muted-foreground">These controls intentionally remain enforced by the backend and cannot be weakened from Portal Control.</p>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          {["Account numbers are exactly 13 digits", "Agents remain isolated by branch and ownership", "Only supervisors and Owner can import customers", "Deposit duplicate and audit protections stay enabled"].map((item) => (
+            <div key={item} className="rounded-lg border border-border bg-background/70 p-3 text-xs font-medium text-foreground">{item}</div>
           ))}
         </div>
       </section>

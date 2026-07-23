@@ -23,6 +23,7 @@ export default function Customers() {
   const [importHistory, setImportHistory] = useState([]);
   const [collections, setCollections] = useState([]);
   const [branches, setBranches] = useState([]);
+  const [importColumns, setImportColumns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [branchFilter, setBranchFilter] = useState('');
@@ -46,6 +47,7 @@ export default function Customers() {
       setImportHistory(imports || []);
       setCollections(collectionData || []);
       setBranches(settings?.branches?.length ? settings.branches : defaultBranches);
+      setImportColumns(settings?.customerImportColumns || []);
     } catch {}
     setLoading(false);
   };
@@ -60,7 +62,8 @@ export default function Customers() {
     const matchSearch = !q ||
       customer.account_name?.toLowerCase().includes(q) ||
       customer.account_number?.toLowerCase().includes(q) ||
-      customer.phone?.includes(q);
+      customer.phone?.includes(q) ||
+      Object.values(customer.custom_fields || {}).some((value) => String(value || '').toLowerCase().includes(q));
     const matchBranch = !branchFilter || customer.branch_name === branchFilter || customer.branch_id === branchFilter;
     const matchStatus = !statusFilter || customer.customer_status === statusFilter;
     return matchSearch && matchBranch && matchStatus;
@@ -174,7 +177,13 @@ export default function Customers() {
                 const selectedStats = customerDepositMap.get(customer.id) || { total: 0, lastDate: '', count: 0 };
                 return (
                   <tr key={customer.id} className="border-b border-border/50 transition-colors hover:bg-muted/30">
-                    <td className="px-3 py-3 font-medium text-foreground">{customer.account_name}</td>
+                    <td className="px-3 py-3 font-medium text-foreground">
+                      {customer.account_name}
+                      {Object.entries(customer.custom_fields || {}).map(([key, value]) => {
+                        const label = importColumns.find((item) => item.key === key)?.label || key.replace(/^custom_/, '');
+                        return <span key={key} className="mt-0.5 block text-[10px] font-normal text-muted-foreground">{label}: {value}</span>;
+                      })}
+                    </td>
                     <td className="px-3 py-3 font-mono text-xs text-muted-foreground">{customer.account_number}</td>
                     <td className="hidden px-3 py-3 text-muted-foreground md:table-cell">
                       <span className="flex items-center gap-1"><Phone className="h-3 w-3" />{customer.phone || '-'}</span>
@@ -221,6 +230,10 @@ export default function Customers() {
                     <p className="truncate text-sm font-semibold text-foreground">{customer.account_name}</p>
                     <p className="font-mono text-xs text-muted-foreground">{customer.account_number}</p>
                     <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground"><Phone className="h-3 w-3" />{customer.phone || '-'}</p>
+                    {Object.entries(customer.custom_fields || {}).map(([key, value]) => {
+                      const label = importColumns.find((item) => item.key === key)?.label || key.replace(/^custom_/, '');
+                      return <p key={key} className="mt-1 truncate text-xs text-muted-foreground">{label}: {value}</p>;
+                    })}
                   </div>
                   <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${statusColors[customer.customer_status] || statusColors.inactive}`}>
                     {customer.customer_status}

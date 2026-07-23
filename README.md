@@ -112,7 +112,7 @@ Follow [Phase 4 Frontend and Mobile](docs/phase-4-frontend-and-mobile.md) for ro
 3. Test Owner Admin, Supervisor, and SUSU Agent accounts separately.
 4. Confirm Supervisors see only their assigned branches.
 5. Confirm Agents cannot add customers or view another Agent's deposits.
-6. Import customers using `Account Name`, `Account Number`, and `Branch` columns.
+6. Configure customer import titles in Portal Control, download the current `.xlsx` template, and keep the 13-digit account-number column as Text.
 7. Confirm every account number is exactly 13 digits.
 8. Record a test deposit and verify duplicate/idempotency protection.
 9. Verify Daily, Agent, Branch, Audit, PDF, and Excel exports.

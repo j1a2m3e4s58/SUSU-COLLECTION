@@ -1,10 +1,12 @@
 import importlib
+import io
 import os
 import pathlib
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+from openpyxl import load_workbook
 
 
 def load_app(monkeypatch, tmp_path):
@@ -575,6 +577,54 @@ def test_agent_cannot_add_customer_or_view_other_agents_collections(monkeypatch,
     collections_response = client.get("/api/collections", headers=headers)
     assert collections_response.status_code == 200
     assert collections_response.get_json()["collections"] == []
+
+
+def test_customer_import_template_uses_configured_columns_and_text_account_numbers(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    owner = app_module.load_user_store()[0]
+    settings = app_module.load_portal_settings_store()
+    settings["customerImportColumns"] = [
+        {"key": "account_name", "label": "Member Name", "type": "text", "required": True},
+        {"key": "account_number", "label": "Account ID", "type": "account_number", "required": True},
+        {"key": "custom_national_id", "label": "National ID", "type": "text", "required": False},
+    ]
+    app_module.save_portal_settings_store(settings)
+    response = app_module.app.test_client().get(
+        "/api/customers/import-template?branch=HEAD%20OFFICE",
+        headers=auth_headers(app_module, owner["id"]),
+    )
+    assert response.status_code == 200
+    workbook = load_workbook(io.BytesIO(response.data))
+    sheet = workbook["Customer Import"]
+    assert [sheet.cell(1, index).value for index in range(1, 4)] == ["Member Name", "Account ID", "National ID"]
+    assert sheet["B2"].value == "1310000100001"
+    assert sheet["B2"].data_type == "s"
+    assert sheet["B2"].number_format == "@"
+    assert sheet["B100"].number_format == "@"
+
+
+def test_customer_import_accepts_renamed_columns_scientific_account_and_custom_data(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    owner = app_module.load_user_store()[0]
+    settings = app_module.load_portal_settings_store()
+    settings["customerImportColumns"] = [
+        {"key": "account_name", "label": "Member Name", "type": "text", "required": True},
+        {"key": "account_number", "label": "Account ID", "type": "account_number", "required": True},
+        {"key": "branch", "label": "Office", "type": "branch", "required": False},
+        {"key": "custom_national_id", "label": "National ID", "type": "text", "required": False},
+    ]
+    app_module.save_portal_settings_store(settings)
+    csv_data = b"Member Name,Account ID,Office,National ID\nAma Mensah,1.310000100001E+12,HEAD OFFICE,GHA-123\n"
+    response = app_module.app.test_client().post(
+        "/api/customers/import",
+        data={"branch": "HEAD OFFICE", "file": (io.BytesIO(csv_data), "customers.csv")},
+        content_type="multipart/form-data",
+        headers=auth_headers(app_module, owner["id"]),
+    )
+    assert response.status_code == 200
+    customer = response.get_json()["created"][0]
+    assert customer["account_number"] == "1310000100001"
+    assert customer["custom_fields"] == {"custom_national_id": "GHA-123"}
 
 
 def test_collection_enforces_branch_account_and_duplicate_protection(monkeypatch, tmp_path):

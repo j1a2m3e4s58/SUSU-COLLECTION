@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { createAgentAccount, deleteStaff, exportBackup, getAgentsPage, getCollections, getCustomerImports, getPortalSettings, importCustomers, reopenDailyCollections, resetAgentPassword, updateStaff } from '@/api/portalClient';
+import { createAgentAccount, deleteStaff, downloadCustomerImportTemplate, exportBackup, getAgentsPage, getCollections, getCustomerImports, getPortalSettings, importCustomers, reopenDailyCollections, resetAgentPassword, updateStaff } from '@/api/portalClient';
 import PageControls from '@/components/PageControls';
 import ControlledSelect from '@/components/ui/controlled-select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -40,6 +40,7 @@ export default function AgentManagement() {
   const [importFile, setImportFile] = useState(null);
   const [importFileName, setImportFileName] = useState('');
   const [importSummary, setImportSummary] = useState(null);
+  const [downloadingTemplate, setDownloadingTemplate] = useState(false);
   const [importHistory, setImportHistory] = useState([]);
   const [page, setPage] = useState(1);
   const [pagination, setPagination] = useState(null);
@@ -283,18 +284,22 @@ export default function AgentManagement() {
     }
   };
 
-  const downloadCustomerTemplate = () => {
-    const rows = [
-      ['Account Name', 'Account Number', 'Branch'],
-      ['TEST AMA MENSAH', '1310000100001', scopedBranches[0] || 'BAWJIASE'],
-    ];
-    const csv = rows.map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(',')).join('\r\n');
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = 'susu_customer_import_template.csv';
-    anchor.click();
-    URL.revokeObjectURL(url);
+  const downloadCustomerTemplate = async () => {
+    setDownloadingTemplate(true);
+    setError('');
+    try {
+      const blob = await downloadCustomerImportTemplate(importBranch);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = 'susu_customer_import_template.xlsx';
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message || 'Could not download the customer template.');
+    } finally {
+      setDownloadingTemplate(false);
+    }
   };
 
   const handleImportFile = async (event) => {
@@ -308,7 +313,7 @@ export default function AgentManagement() {
       const preview = await importCustomers({ branch: importBranch, file, preview: true });
       setImportRows(preview.validRows || []);
       setImportInvalidRows((preview.skipped || []).map((row) => ({ rowNumber: row.row, errors: [row.reason] })));
-      if (!(preview.validRows || []).length) setError('No valid rows found. Use columns: Account Name, Account Number, Branch.');
+      if (!(preview.validRows || []).length) setError('No valid rows found. Download the latest template and keep account numbers as 13-digit text.');
     } catch (err) {
       setError(err.message || 'Could not read the upload file.');
     } finally {
@@ -615,13 +620,13 @@ export default function AgentManagement() {
           <DialogContent className="max-w-lg">
             <DialogHeader>
               <DialogTitle>Import Customers</DialogTitle>
-              <DialogDescription>Upload CSV or Excel with Account Name, Account Number, and Branch.</DialogDescription>
+              <DialogDescription>Upload CSV or Excel using the column titles configured in Portal Control.</DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
               <ControlledSelect value={importBranch} onChange={setImportBranch} options={scopedBranches} placeholder="Import branch" className={inputClass} />
-              <button type="button" onClick={downloadCustomerTemplate} className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-background/70 px-4 py-2 text-sm font-medium text-foreground hover:bg-muted">
-                <Download className="h-4 w-4" />
-                Download Customer Template
+              <button type="button" onClick={downloadCustomerTemplate} disabled={downloadingTemplate} className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-background/70 px-4 py-2 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50">
+                {downloadingTemplate ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                {downloadingTemplate ? 'Preparing Excel...' : 'Download Excel Template'}
               </button>
               <label className="flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-border bg-muted/30 p-5 text-center hover:bg-muted/50">
                 <Upload className="mb-2 h-6 w-6 text-blue-500" />

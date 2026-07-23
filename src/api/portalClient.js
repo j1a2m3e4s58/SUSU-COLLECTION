@@ -296,6 +296,19 @@ export async function importCustomers(payload) {
   });
 }
 
+export async function downloadCustomerImportTemplate(branch = "") {
+  const params = new URLSearchParams();
+  if (branch) params.set("branch", branch);
+  const response = await fetch(`${API_ROOT}/customers/import-template${params.size ? `?${params.toString()}` : ""}`, {
+    credentials: "include",
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || "Could not download the customer import template.");
+  }
+  return response.blob();
+}
+
 export async function getCustomerImports() {
   const data = await apiRequest("/customers/imports");
   return data.imports || [];

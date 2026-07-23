@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 import math
+from decimal import Decimal, InvalidOperation
 from email.message import EmailMessage
 from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
 from urllib.request import Request, urlopen
@@ -21,7 +22,8 @@ from flask import Flask, g, has_request_context, jsonify, redirect, request, sen
 from werkzeug.exceptions import HTTPException
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Alignment, Font, PatternFill
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
@@ -74,6 +76,11 @@ DEFAULT_PORTAL_DEPARTMENTS = [
 ]
 REQUIRED_PORTAL_DEPARTMENTS = ["SUSU"]
 SUSU_DEPARTMENTS = {"SUSU", "SUSU AGENT", "SUSU SUPERVISOR"}
+DEFAULT_CUSTOMER_IMPORT_COLUMNS = [
+    {"key": "account_name", "label": "Account Name", "type": "text", "required": True},
+    {"key": "account_number", "label": "Account Number", "type": "account_number", "required": True},
+    {"key": "branch", "label": "Branch", "type": "branch", "required": False},
+]
 DEFAULT_PORTAL_SETTINGS = {
     "bankName": "Bawjiase Community Bank PLC",
     "shortBankName": "BCB",
@@ -81,9 +88,7 @@ DEFAULT_PORTAL_SETTINGS = {
     "emailDomain": OFFICIAL_EMAIL_DOMAIN,
     "branches": DEFAULT_PORTAL_BRANCHES,
     "departments": DEFAULT_PORTAL_DEPARTMENTS,
-    "formCategories": [],
-    "departmentChangeTypes": [],
-    "transferLocations": [],
+    "customerImportColumns": DEFAULT_CUSTOMER_IMPORT_COLUMNS,
     "loginSubtitle": "Sign in to manage SUSU collections, customers, staff, and branch reports.",
     "loginButtonText": "Secure Login",
     "authorizedAccessText": "Authorized Access Only",
@@ -105,7 +110,6 @@ DEFAULT_PORTAL_SETTINGS = {
     "securityReviewReference": "",
     "securityReviewDate": "",
     "dashboardLabel": "Dashboard",
-    "formsLabel": "",
     "profileLabel": "Profile",
     "activeStaffLabel": "Active Staff",
     "branchCoverageLabel": "Branch Coverage",
@@ -1648,6 +1652,45 @@ def normalize_portal_departments(values) -> list[str]:
     return departments
 
 
+def normalize_customer_import_columns(values) -> list[dict]:
+    source = values if isinstance(values, list) else DEFAULT_CUSTOMER_IMPORT_COLUMNS
+    columns = []
+    seen_keys = set()
+    seen_labels = set()
+    allowed_types = {"text", "account_number", "branch"}
+    core_types = {"account_name": "text", "account_number": "account_number", "branch": "branch"}
+    for index, raw in enumerate(source[:20]):
+        if not isinstance(raw, dict):
+            continue
+        label = " ".join(str(raw.get("label") or "").strip().split())[:60]
+        key = str(raw.get("key") or "").strip().lower()
+        if not key and label:
+            key = f"custom_{hashlib.sha1(f'{label}:{index}'.encode('utf-8')).hexdigest()[:10]}"
+        if key.startswith("custom_"):
+            suffix = "".join(character for character in key[7:] if character.isalnum() or character == "_")[:40]
+            key = f"custom_{suffix}" if suffix else f"custom_{hashlib.sha1(f'{label}:{index}'.encode('utf-8')).hexdigest()[:10]}"
+        if key not in core_types and not key.startswith("custom_"):
+            key = f"custom_{hashlib.sha1(f'{key}:{label}:{index}'.encode('utf-8')).hexdigest()[:10]}"
+        if not label or key in seen_keys or label.casefold() in seen_labels:
+            continue
+        column_type = core_types.get(key, str(raw.get("type") or "text").strip().lower())
+        if column_type not in allowed_types:
+            column_type = "text"
+        columns.append({
+            "key": key,
+            "label": label,
+            "type": column_type,
+            "required": key in {"account_name", "account_number"},
+        })
+        seen_keys.add(key)
+        seen_labels.add(label.casefold())
+    for default in DEFAULT_CUSTOMER_IMPORT_COLUMNS[:2]:
+        if default["key"] not in seen_keys:
+            columns.insert(len(seen_keys), dict(default))
+            seen_keys.add(default["key"])
+    return columns
+
+
 def normalize_portal_rename_map(value: object) -> dict[str, str]:
     if not isinstance(value, dict):
         return {}
@@ -1809,9 +1852,7 @@ def load_portal_settings_store() -> dict:
         "emailDomain": normalize_email_domain(raw.get("emailDomain")),
         "branches": normalize_portal_branches(raw.get("branches")),
         "departments": normalize_portal_departments(raw.get("departments")),
-        "formCategories": [],
-        "departmentChangeTypes": [],
-        "transferLocations": [],
+        "customerImportColumns": normalize_customer_import_columns(raw.get("customerImportColumns")),
         "loginSubtitle": str(raw.get("loginSubtitle") or DEFAULT_PORTAL_SETTINGS["loginSubtitle"]),
         "loginButtonText": str(raw.get("loginButtonText") or DEFAULT_PORTAL_SETTINGS["loginButtonText"]),
         "authorizedAccessText": str(raw.get("authorizedAccessText") or DEFAULT_PORTAL_SETTINGS["authorizedAccessText"]),
@@ -1831,7 +1872,6 @@ def load_portal_settings_store() -> dict:
         "securityReviewReference": str(raw.get("securityReviewReference") or "").strip()[:240],
         "securityReviewDate": str(raw.get("securityReviewDate") or "").strip()[:10],
         "dashboardLabel": str(raw.get("dashboardLabel") or DEFAULT_PORTAL_SETTINGS["dashboardLabel"]),
-        "formsLabel": str(raw.get("formsLabel") or DEFAULT_PORTAL_SETTINGS["formsLabel"]),
         "appMode": "live" if str(raw.get("appMode", DEFAULT_PORTAL_SETTINGS["appMode"])).strip().lower() == "live" else "test",
         "publicRegistrationEnabled": bool(raw.get("publicRegistrationEnabled", DEFAULT_PORTAL_SETTINGS["publicRegistrationEnabled"])),
         "profileLabel": str(raw.get("profileLabel") or DEFAULT_PORTAL_SETTINGS["profileLabel"]),
@@ -3435,6 +3475,7 @@ def update_portal_settings():
             return jsonify({"error": "Remove all loaded test staff and test customers before switching to Live Mode."}), 400
     branches = normalize_portal_branches(data.get("branches"))
     departments = normalize_portal_departments(data.get("departments"))
+    customer_import_columns = normalize_customer_import_columns(data.get("customerImportColumns"))
     branch_renames = normalize_portal_rename_map(data.get("branchRenames"))
     department_renames = normalize_portal_rename_map(data.get("departmentRenames"))
     branch_renames = {
@@ -3473,9 +3514,7 @@ def update_portal_settings():
         "emailDomain": normalize_email_domain(data.get("emailDomain")),
         "branches": branches,
         "departments": departments,
-        "formCategories": [],
-        "departmentChangeTypes": [],
-        "transferLocations": [],
+        "customerImportColumns": customer_import_columns,
         "loginSubtitle": str(data.get("loginSubtitle") or DEFAULT_PORTAL_SETTINGS["loginSubtitle"]),
         "loginButtonText": str(data.get("loginButtonText") or DEFAULT_PORTAL_SETTINGS["loginButtonText"]),
         "authorizedAccessText": str(data.get("authorizedAccessText") or DEFAULT_PORTAL_SETTINGS["authorizedAccessText"]),
@@ -3495,7 +3534,6 @@ def update_portal_settings():
         "securityReviewReference": str(data.get("securityReviewReference") or "").strip()[:240],
         "securityReviewDate": str(data.get("securityReviewDate") or "").strip()[:10],
         "dashboardLabel": str(data.get("dashboardLabel") or DEFAULT_PORTAL_SETTINGS["dashboardLabel"]),
-        "formsLabel": str(data.get("formsLabel") or DEFAULT_PORTAL_SETTINGS["formsLabel"]),
         "appMode": requested_mode,
         "publicRegistrationEnabled": bool(data.get("publicRegistrationEnabled", False)),
         "profileLabel": str(data.get("profileLabel") or DEFAULT_PORTAL_SETTINGS["profileLabel"]),
@@ -3521,6 +3559,7 @@ def update_portal_settings():
             "departmentRenames": department_renames,
             "branchChanges": branch_changes,
             "departmentChanges": department_changes,
+            "customerImportColumns": customer_import_columns,
             "renamedRecords": rename_summary,
             "normalizedSusuUsers": normalized_susu_users,
             "emailDomain": settings["emailDomain"],
@@ -3857,6 +3896,7 @@ def import_production_backup():
                 imported_settings.pop("itAccessCode", None)
                 imported_settings.pop("hrAccessCode", None)
                 imported_settings["departments"] = normalize_portal_departments(imported_settings.get("departments"))
+                imported_settings["customerImportColumns"] = normalize_customer_import_columns(imported_settings.get("customerImportColumns"))
                 imported_settings["itAccessCode"] = ""
                 imported_settings["hrAccessCode"] = ""
                 save_portal_settings_store(imported_settings)
@@ -4411,6 +4451,86 @@ def customer_import_value(row: dict, *aliases: str) -> str:
     return ""
 
 
+def normalized_import_account_number(value: object) -> str:
+    text = str(value or "").strip()
+    if text.startswith("=") and len(text) >= 4 and text[1] in {'"', "'"} and text[-1] == text[1]:
+        text = text[2:-1].strip()
+    text = text.lstrip("'").strip()
+    if "e" in text.lower():
+        try:
+            number = Decimal(text)
+        except InvalidOperation:
+            return text
+        if number.is_finite() and number == number.to_integral_value():
+            text = format(number, "f").split(".", 1)[0]
+    return text
+
+
+def configured_customer_import_value(row: dict, columns: list[dict], key: str, *aliases: str) -> str:
+    column = next((item for item in columns if item.get("key") == key), None)
+    configured_aliases = [column.get("label"), key] if column else [key]
+    return customer_import_value(row, *[item for item in configured_aliases if item], *aliases)
+
+
+@app.route("/api/customers/import-template", methods=["GET"])
+def download_customer_import_template():
+    _, auth_user, error = require_authenticated_user()
+    if error:
+        return error
+    if not can_manage_agents_and_customers(auth_user):
+        return jsonify({"error": "Only supervisors or owner admin can download customer templates."}), 403
+    settings = load_portal_settings_store()
+    columns = normalize_customer_import_columns(settings.get("customerImportColumns"))
+    requested_branch = str(request.args.get("branch") or "").strip().upper()
+    try:
+        sample_branch = managed_branch_for_user(auth_user, requested_branch)
+    except ValueError:
+        sample_branch = str(auth_user.get("branch") or settings.get("branches", [""])[0]).strip().upper()
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Customer Import"
+    header_fill = PatternFill("solid", fgColor="0F6B45")
+    header_font = Font(color="FFFFFF", bold=True)
+    sample_values = {
+        "account_name": "TEST AMA MENSAH",
+        "account_number": "1310000100001",
+        "branch": sample_branch,
+    }
+    for column_index, column in enumerate(columns, start=1):
+        cell = sheet.cell(row=1, column=column_index, value=column["label"])
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center")
+        sample = sheet.cell(row=2, column=column_index, value=sample_values.get(column["key"], ""))
+        if column.get("type") == "account_number":
+            sample.number_format = "@"
+            for row_index in range(2, 5001):
+                sheet.cell(row=row_index, column=column_index).number_format = "@"
+        sheet.column_dimensions[cell.column_letter].width = max(18, min(34, len(column["label"]) + 6))
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = f"A1:{sheet.cell(1, len(columns)).coordinate}"
+
+    instructions = workbook.create_sheet("Instructions")
+    instructions.append(["BCB SUSU Customer Import"])
+    instructions.append(["Keep Account Number cells as Text. Every account number must contain exactly 13 digits."])
+    instructions.append(["Account Name and Account Number are required. Branch may be omitted only when the selected import branch should apply to every row."])
+    instructions.append(["Do not rename columns in this workbook unless the matching title is first changed in Portal Control."])
+    instructions.column_dimensions["A"].width = 115
+    instructions["A1"].font = Font(bold=True, color="0F6B45", size=14)
+    instructions.sheet_view.showGridLines = False
+
+    output = io.BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name="susu_customer_import_template.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
 @app.route("/api/customers/import", methods=["POST", "OPTIONS"])
 def import_customers():
     preflight = handle_options()
@@ -4440,6 +4560,7 @@ def import_customers():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 403
     customers = load_json_list_store(CUSTOMERS_STORE_PATH)
+    import_columns = normalize_customer_import_columns(load_portal_settings_store().get("customerImportColumns"))
     existing_numbers = {str(item.get("account_number", "")).strip() for item in customers}
     valid_rows = []
     skipped = []
@@ -4450,15 +4571,17 @@ def import_customers():
             continue
         try:
             account_name = normalize_required_text(
-                customer_import_value(row, "account name", "account_name", "name", "customer name"),
+                configured_customer_import_value(row, import_columns, "account_name", "account name", "name", "customer name"),
                 "Account name",
             )
             account_number = normalize_account_number(
-                customer_import_value(row, "account number", "account_number", "account no", "account no.", "account"),
+                normalized_import_account_number(
+                    configured_customer_import_value(row, import_columns, "account_number", "account number", "account no", "account no.", "account")
+                ),
             )
             branch_name = managed_branch_for_user(
                 auth_user,
-                customer_import_value(row, "branch", "branch name") or import_branch,
+                configured_customer_import_value(row, import_columns, "branch", "branch", "branch name") or import_branch,
             )
         except ValueError as exc:
             skipped.append({"row": row_number, "reason": str(exc)})
@@ -4466,11 +4589,18 @@ def import_customers():
         if account_number in existing_numbers:
             skipped.append({"row": row_number, "reason": "Duplicate account number"})
             continue
+        custom_fields = {
+            column["key"]: customer_import_value(row, column["label"], column["key"])
+            for column in import_columns
+            if str(column.get("key", "")).startswith("custom_")
+            and customer_import_value(row, column["label"], column["key"])
+        }
         valid_rows.append({
             "rowNumber": row_number,
             "account_name": account_name,
             "account_number": account_number,
             "branch": branch_name,
+            "custom_fields": custom_fields,
         })
         existing_numbers.add(account_number)
 
@@ -4491,6 +4621,7 @@ def import_customers():
             "branch_name": branch_name,
             "customer_status": "active",
             "address": "",
+            "custom_fields": dict(row.get("custom_fields") or {}),
             "total_deposits": 0,
             "last_deposit_date": None,
             "createdAt": now_ms(),
@@ -4513,6 +4644,7 @@ def import_customers():
                 "skippedCount": len(skipped),
                 "createdCustomerIds": [item["id"] for item in created],
                 "skipped": skipped[:50],
+                "columns": [{"key": item["key"], "label": item["label"]} for item in import_columns],
                 "uploadedBy": auth_user["fullname"],
                 "uploadedById": auth_user["id"],
                 "uploadedByEmail": auth_user["email"],
