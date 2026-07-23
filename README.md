@@ -22,6 +22,7 @@ Set local backend values in `mail-api/.env` or in the current shell. Never commi
 ```text
 PORT=4190
 PORTAL_DEFAULT_INITIAL_PASSWORD=local-test-password
+PORTAL_CONTROL_PASSWORD=local-portal-control-password
 PORTAL_PUBLIC_URL=http://127.0.0.1:5173
 ALLOWED_ORIGINS=http://127.0.0.1:5173
 MONITORING_ALERT_EMAIL=operations@example.com
@@ -84,6 +85,7 @@ The included `render.yaml` provisions the Flask web service and managed PostgreS
 Configure all required secrets in Render:
 
 - `PORTAL_DEFAULT_INITIAL_PASSWORD`
+- `PORTAL_CONTROL_PASSWORD`
 - `PORTAL_PUBLIC_URL`
 - `ALLOWED_ORIGINS`
 - `MAIL_SERVER`

@@ -134,6 +134,7 @@ def env_secret(name: str) -> str:
 
 
 DEFAULT_INITIAL_PASSWORD = env_secret("PORTAL_DEFAULT_INITIAL_PASSWORD")
+PORTAL_CONTROL_PASSWORD = env_secret("PORTAL_CONTROL_PASSWORD")
 IT_ACCESS_CODE = env_secret("IT_ACCESS_CODE")
 HR_ACCESS_CODE = env_secret("HR_ACCESS_CODE")
 GLOBAL_MANAGER_ROLES = {"OwnerAdmin"}
@@ -1937,6 +1938,11 @@ def portal_authorization_error(data: dict, user: dict, session_token: str):
     return None
 
 
+def portal_control_password_matches(candidate: object) -> bool:
+    supplied = str(candidate or "").strip()
+    return bool(PORTAL_CONTROL_PASSWORD) and hmac.compare_digest(supplied, PORTAL_CONTROL_PASSWORD)
+
+
 def next_content_id(items: list[dict], floor: int = 1000) -> int:
     current = floor - 1
     for item in items:
@@ -3067,6 +3073,10 @@ def production_status():
             "ok": bool(portal_public_url()),
             "label": "PORTAL_PUBLIC_URL configured",
         },
+        "portalControlPassword": {
+            "ok": bool(PORTAL_CONTROL_PASSWORD),
+            "label": "PORTAL_CONTROL_PASSWORD configured",
+        },
         "mail": {
             "ok": all(env_secret(name) for name in ["MAIL_SERVER", "MAIL_USERNAME", "MAIL_PASSWORD", "MAIL_DEFAULT_SENDER"]),
             "label": "Mail server configured",
@@ -3088,7 +3098,15 @@ def production_status():
             "label": "Independent security review completed with evidence",
         },
     }
-    required = ["database", "portalPublicUrl", "mail", "monitoring", "testDataRemoved", "independentSecurityReview"]
+    required = [
+        "database",
+        "portalPublicUrl",
+        "portalControlPassword",
+        "mail",
+        "monitoring",
+        "testDataRemoved",
+        "independentSecurityReview",
+    ]
     live_ready = all(checks[key]["ok"] for key in required)
     return jsonify({
         "storageBackend": "postgres" if pg_enabled() else "json-file",
@@ -3398,56 +3416,12 @@ def unlock_portal_settings():
     if error:
         return error
     password = str(data.get("password", "") or "")
-    passwords = load_password_store()
-    stored_password = passwords.get(str(auth_user.get("email", "") or "").strip().lower())
-    if not stored_password or not verify_password(stored_password, password):
+    if not PORTAL_CONTROL_PASSWORD:
+        return jsonify({"error": "PORTAL_CONTROL_PASSWORD is not configured on the server."}), 500
+    if not portal_control_password_matches(password):
         record_audit_log(auth_user, "PORTAL_CONTROL_UNLOCK_FAILED", {"reason": "invalid_password"})
-        return jsonify({"error": "Your account password is incorrect."}), 401
-    try:
-        challenge = issue_privileged_mfa_challenge(auth_user, purpose="portal-control")
-    except Exception as exc:
-        app.logger.error("Portal Control MFA delivery failed for %s: %s", auth_user.get("email"), exc)
-        return jsonify({"error": "The verification code could not be delivered. Try again shortly."}), 503
-    record_audit_log(auth_user, "PORTAL_CONTROL_MFA_REQUIRED", {"ok": True})
-    return jsonify({"ok": True, "requiresMfa": True, **challenge})
-
-
-@app.route("/api/portal-settings/unlock/verify", methods=["POST", "OPTIONS"])
-def verify_portal_settings_unlock():
-    preflight = handle_options()
-    if preflight:
-        return preflight
-    session_token, auth_user, error = require_owner_admin()
-    if error:
-        return error
-    data, error = require_json()
-    if error:
-        return error
-    challenge_id = str(data.get("challengeId", "") or "").strip()
-    code = "".join(ch for ch in str(data.get("code", "") or "") if ch.isdigit())
-    limit_key = rate_limit_key("portal-control-mfa", challenge_id)
-    if auth_rate_limited(limit_key):
-        return jsonify({"error": "Too many verification attempts. Start the unlock again."}), 429
-    challenges = load_privileged_mfa_challenges()
-    challenge = challenges.get(challenge_id)
-    valid = bool(
-        challenge
-        and str(challenge.get("userId", "")) == str(auth_user.get("id", ""))
-        and str(challenge.get("purpose", "login")) == "portal-control"
-        and len(code) == 6
-        and hmac.compare_digest(
-            str(challenge.get("codeHash", "")),
-            privileged_mfa_code_hash(challenge_id, code),
-        )
-    )
-    if not valid:
-        record_auth_failure(limit_key)
-        record_audit_log(auth_user, "PORTAL_CONTROL_MFA_FAILED", {"challengeId": challenge_id})
-        return jsonify({"error": "Invalid or expired verification code."}), 400
-    challenges.pop(challenge_id, None)
-    atomic_write_json(PRIVILEGED_MFA_PATH, challenges)
-    clear_auth_failures(limit_key)
-    record_audit_log(auth_user, "PORTAL_CONTROL_UNLOCKED", {"mfaVerified": True})
+        return jsonify({"error": "Portal Control password is incorrect."}), 403
+    record_audit_log(auth_user, "PORTAL_CONTROL_UNLOCKED", {"passwordVerified": True})
     authorization_token, expires_at = issue_portal_authorization(auth_user, session_token)
     return jsonify({"ok": True, "authorizationToken": authorization_token, "expiresAt": expires_at})
 

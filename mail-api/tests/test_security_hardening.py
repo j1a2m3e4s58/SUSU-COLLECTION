@@ -13,6 +13,7 @@ def load_app(monkeypatch, tmp_path):
     monkeypatch.setenv("PORTAL_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("PORTAL_PUBLIC_URL", "https://portal.example.test")
     monkeypatch.setenv("PORTAL_DEFAULT_INITIAL_PASSWORD", "SeedPass123!")
+    monkeypatch.setenv("PORTAL_CONTROL_PASSWORD", "PortalControl123!")
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
     sys.modules.pop("app", None)
     return importlib.import_module("app")
@@ -227,17 +228,9 @@ def auth_headers(app_module, user_id):
 
 
 def unlock_portal_control(client, headers):
-    challenge_response = client.post(
-        "/api/portal-settings/unlock",
-        json={"password": "SeedPass123!"},
-        headers=headers,
-    )
-    assert challenge_response.status_code == 200
-    challenge = challenge_response.get_json()
-    assert challenge["requiresMfa"] is True
     response = client.post(
-        "/api/portal-settings/unlock/verify",
-        json={"challengeId": challenge["challengeId"], "code": challenge["testCode"]},
+        "/api/portal-settings/unlock",
+        json={"password": "PortalControl123!"},
         headers=headers,
     )
     assert response.status_code == 200
@@ -352,41 +345,26 @@ def test_portal_branch_removal_requires_backup(monkeypatch, tmp_path):
     assert "Export a backup" in response.get_json()["error"]
 
 
-def test_portal_control_requires_owner_password_and_mfa(monkeypatch, tmp_path):
+def test_portal_control_requires_configured_password_without_mfa(monkeypatch, tmp_path):
     app_module = load_app(monkeypatch, tmp_path)
     owner = app_module.load_user_store()[0]
     client = app_module.app.test_client()
     headers = auth_headers(app_module, owner["id"])
     denied = client.post(
         "/api/portal-settings/unlock",
-        json={"password": "seedpass123!"},
+        json={"password": "portalcontrol123!"},
         headers=headers,
     )
-    assert denied.status_code == 401
+    assert denied.status_code == 403
 
-    challenge_response = client.post(
+    unlocked = client.post(
         "/api/portal-settings/unlock",
-        json={"password": "SeedPass123!"},
+        json={"password": "PortalControl123!"},
         headers=headers,
     )
-    assert challenge_response.status_code == 200
-    challenge = challenge_response.get_json()
-    assert challenge["requiresMfa"] is True
-
-    wrong_code = client.post(
-        "/api/portal-settings/unlock/verify",
-        json={"challengeId": challenge["challengeId"], "code": "000000"},
-        headers=headers,
-    )
-    assert wrong_code.status_code == 400
-
-    verified = client.post(
-        "/api/portal-settings/unlock/verify",
-        json={"challengeId": challenge["challengeId"], "code": challenge["testCode"]},
-        headers=headers,
-    )
-    assert verified.status_code == 200
-    assert verified.get_json()["authorizationToken"]
+    assert unlocked.status_code == 200
+    assert unlocked.get_json()["authorizationToken"]
+    assert "requiresMfa" not in unlocked.get_json()
 
 
 def test_supervisor_is_limited_to_agents_in_managed_branch(monkeypatch, tmp_path):

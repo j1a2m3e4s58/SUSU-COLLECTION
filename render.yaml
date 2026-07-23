@@ -51,3 +51,5 @@ services:
         sync: false
       - key: PORTAL_DEFAULT_INITIAL_PASSWORD
         sync: false
+      - key: PORTAL_CONTROL_PASSWORD
+        sync: false

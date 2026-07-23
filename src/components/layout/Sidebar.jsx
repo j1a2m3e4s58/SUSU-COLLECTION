@@ -16,7 +16,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { setStoredPortalAuthorization, unlockPortalControl, verifyPortalControlUnlock } from '@/api/portalClient';
+import { setStoredPortalAuthorization, unlockPortalControl } from '@/api/portalClient';
 import { canManageCustomers as canManageCustomerRecords, isOwnerAdmin, isSusuAgent as isAgentUser } from '@/lib/roles';
 
 export const navItems = [
@@ -43,8 +43,6 @@ export default function Sidebar({ isOpen, onClose, user, settings, collapsed = t
   const [password, setPassword] = useState("");
   const [unlockError, setUnlockError] = useState("");
   const [unlocking, setUnlocking] = useState(false);
-  const [unlockChallenge, setUnlockChallenge] = useState(null);
-  const [verificationCode, setVerificationCode] = useState("");
 
   const canManagePortal = isOwnerAdmin(user);
   const canOwnerControl = isOwnerAdmin(user);
@@ -71,8 +69,6 @@ export default function Sidebar({ isOpen, onClose, user, settings, collapsed = t
     event.preventDefault();
     setPassword("");
     setUnlockError("");
-    setUnlockChallenge(null);
-    setVerificationCode("");
     setUnlockOpen(true);
   };
 
@@ -80,17 +76,11 @@ export default function Sidebar({ isOpen, onClose, user, settings, collapsed = t
     setUnlocking(true);
     setUnlockError("");
     try {
-      if (!unlockChallenge) {
-        const result = await unlockPortalControl(password);
-        setUnlockChallenge(result);
-        setVerificationCode(result.testCode || "");
-      } else {
-        const result = await verifyPortalControlUnlock(unlockChallenge.challengeId, verificationCode);
-        setStoredPortalAuthorization(result.authorizationToken);
-        setUnlockOpen(false);
-        onClose?.();
-        navigate('/portal-control');
-      }
+      const result = await unlockPortalControl(password);
+      setStoredPortalAuthorization(result.authorizationToken);
+      setUnlockOpen(false);
+      onClose?.();
+      navigate('/portal-control');
     } catch (err) {
       setUnlockError(err.message || 'Portal control password is incorrect.');
     } finally {
@@ -173,32 +163,26 @@ export default function Sidebar({ isOpen, onClose, user, settings, collapsed = t
       <Dialog open={unlockOpen} onOpenChange={(open) => {
         setUnlockOpen(open);
         if (!open) {
-          setUnlockChallenge(null);
-          setVerificationCode("");
           setPassword("");
           setUnlockError("");
         }
       }}>
         <DialogContent className="w-[calc(100vw-2rem)] max-w-[360px] rounded-xl p-5 sm:max-w-md sm:p-6">
           <DialogHeader>
-            <DialogTitle>{unlockChallenge ? "Verify Portal Control Access" : "Confirm Your Identity"}</DialogTitle>
+            <DialogTitle>Open Portal Control</DialogTitle>
             <DialogDescription>
-              {unlockChallenge
-                ? "Enter the six-digit code sent to your official email."
-                : "Enter your OwnerAdmin account password. A verification code will follow."}
+              Enter the Portal Control password to open system-wide settings.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
-            <Label htmlFor="portal-control-password">{unlockChallenge ? "Verification Code" : "Account Password"}</Label>
+            <Label htmlFor="portal-control-password">Portal Control Password</Label>
             <Input
               id="portal-control-password"
-              type={unlockChallenge ? "text" : "password"}
-              inputMode={unlockChallenge ? "numeric" : undefined}
-              maxLength={unlockChallenge ? 6 : undefined}
-              value={unlockChallenge ? verificationCode : password}
-              onChange={(event) => unlockChallenge
-                ? setVerificationCode(event.target.value.replace(/\D/g, '').slice(0, 6))
-                : setPassword(event.target.value)}
+              type="password"
+              autoComplete="off"
+              placeholder="Enter Portal Control password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') handleUnlock();
               }}
@@ -214,9 +198,9 @@ export default function Sidebar({ isOpen, onClose, user, settings, collapsed = t
               type="button"
               className="w-full sm:w-auto"
               onClick={handleUnlock}
-              disabled={unlocking || (unlockChallenge ? verificationCode.length !== 6 : !password.trim())}
+              disabled={unlocking || !password}
             >
-              {unlocking ? "Checking..." : unlockChallenge ? "Verify and Unlock" : "Send Verification Code"}
+              {unlocking ? "Opening..." : "Open Portal Control"}
             </Button>
           </DialogFooter>
         </DialogContent>

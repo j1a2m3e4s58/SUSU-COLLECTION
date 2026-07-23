@@ -149,13 +149,6 @@ export async function unlockPortalControl(password) {
   });
 }
 
-export async function verifyPortalControlUnlock(challengeId, code) {
-  return apiRequest("/portal-settings/unlock/verify", {
-    method: "POST",
-    body: { challengeId, code },
-  });
-}
-
 export async function getProductionStatus() {
   return apiRequest("/production-status");
 }
