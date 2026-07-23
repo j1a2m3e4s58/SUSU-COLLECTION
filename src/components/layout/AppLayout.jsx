@@ -92,6 +92,12 @@ export default function AppLayout() {
               <div className="space-y-5">
                 <AgentScopePanel />
                 <Outlet />
+                <footer
+                  className="border-t border-border/70 pt-4 text-center text-xs text-muted-foreground lg:text-right"
+                  aria-label="Site creator"
+                >
+                  Site created by <span className="font-semibold text-foreground">James Lincoln Awuah</span>
+                </footer>
               </div>
             </main>
           </AgentScopeProvider>
