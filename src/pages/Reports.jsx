@@ -80,6 +80,7 @@ function splitJoinedName(value, referenceNames = []) {
 export default function Reports() {
   const { selectedDate, selectedMonth, selectedScope, selectedLabel } = useWorkDate();
   const { canUseAgentScope, selectedAgent, matchesSelectedAgent } = useAgentScope();
+  const showCollectionTime = canUseAgentScope;
   const [collections, setCollections] = useState([]);
   const [branches, setBranches] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -138,8 +139,19 @@ export default function Reports() {
 
   const exportCSV = () => {
     if (!reportData.length) return;
-    const headers = ['Reference', 'Customer', 'Account Number', 'Amount', 'Agent', 'Branch', 'Date', 'Time', 'Status', 'Review'];
-    const rows = reportData.map(c => [c.transaction_reference, c.account_name, c.account_number, c.amount, c.agent_name, c.branch_name, c.transaction_date, c.transaction_time, c.status, c.supervisor_review_status]);
+    const headers = ['Reference', 'Customer', 'Account Number', 'Amount', 'Agent', 'Branch', 'Date', ...(showCollectionTime ? ['Time'] : []), 'Status', 'Review'];
+    const rows = reportData.map(c => [
+      c.transaction_reference,
+      c.account_name,
+      c.account_number,
+      c.amount,
+      c.agent_name,
+      c.branch_name,
+      c.transaction_date,
+      ...(showCollectionTime ? [c.transaction_time] : []),
+      c.status,
+      c.supervisor_review_status,
+    ]);
     const csv = [headers, ...rows].map(r => r.map(escapeCsvCell).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const a = document.createElement('a');
@@ -153,7 +165,7 @@ export default function Reports() {
     const referenceNames = reportData.map((item) => item.agent_name).filter(Boolean);
     const headers = isDailySubmission
       ? ['Account Name', 'Account Number', 'Amount (GHS)', 'Agent Code', 'Branch']
-      : ['Reference', 'Customer', 'Account Number', 'Amount', 'Agent', 'Branch', 'Date', 'Time', 'Status', 'Review'];
+      : ['Reference', 'Customer', 'Account Number', 'Amount', 'Agent', 'Branch', 'Date', ...(showCollectionTime ? ['Time'] : []), 'Status', 'Review'];
     const rows = isDailySubmission
       ? reportData.map(c => [
           splitJoinedName(c.account_name, referenceNames),
@@ -162,10 +174,21 @@ export default function Reports() {
           c.agent_name,
           c.branch_name,
         ])
-      : reportData.map(c => [c.transaction_reference, c.account_name, c.account_number, c.amount, c.agent_name, c.branch_name, c.transaction_date, c.transaction_time, c.status, c.supervisor_review_status]);
+      : reportData.map(c => [
+          c.transaction_reference,
+          c.account_name,
+          c.account_number,
+          c.amount,
+          c.agent_name,
+          c.branch_name,
+          c.transaction_date,
+          ...(showCollectionTime ? [c.transaction_time] : []),
+          c.status,
+          c.supervisor_review_status,
+        ]);
     const columnWidths = isDailySubmission
       ? ['230', '170', '130', '230', '150']
-      : ['170', '220', '170', '120', '220', '150', '120', '110', '120', '130'];
+      : ['170', '220', '170', '120', '220', '150', '120', ...(showCollectionTime ? ['110'] : []), '120', '130'];
     const html = `<!doctype html><html><head><meta charset="utf-8" />
       <style>
         table { border-collapse: collapse; font-family: Arial, Helvetica, sans-serif; font-size: 12pt; }
@@ -192,8 +215,8 @@ export default function Reports() {
     if (!reportData.length) return;
     const total = reportData.reduce((s, c) => s + (c.amount || 0), 0);
     const reportLabel = reportTypes.find(r => r.id === selectedType)?.label || 'Report';
-    const tableRows = reportData.map(c => `<tr><td>${escapeCell(c.transaction_reference)}</td><td>${escapeCell(c.account_name)}</td><td>${escapeCell(c.account_number)}</td><td>${escapeCell(`GHS ${c.amount || 0}`)}</td><td>${escapeCell(c.agent_name)}</td><td>${escapeCell(c.branch_name)}</td><td>${escapeCell(c.transaction_date)}</td><td>${escapeCell(c.status)}</td></tr>`).join('');
-    const html = `<!doctype html><html><head><meta charset="utf-8"></head><body><h1>Susu Collection - ${escapeCell(reportLabel)}</h1><p>Date: ${escapeCell(new Date().toLocaleString())}</p><p>Total: GHS ${escapeCell(total.toLocaleString())} | Transactions: ${reportData.length}</p><table border="1"><tr><th>Ref</th><th>Customer</th><th>Account</th><th>Amount</th><th>Agent</th><th>Branch</th><th>Date</th><th>Status</th></tr>${tableRows}</table><br><p>Agent Signature: _______________ &nbsp;&nbsp; Supervisor Signature: _______________</p></body></html>`;
+    const tableRows = reportData.map(c => `<tr><td>${escapeCell(c.transaction_reference)}</td><td>${escapeCell(c.account_name)}</td><td>${escapeCell(c.account_number)}</td><td>${escapeCell(`GHS ${c.amount || 0}`)}</td><td>${escapeCell(c.agent_name)}</td><td>${escapeCell(c.branch_name)}</td><td>${escapeCell(c.transaction_date)}</td>${showCollectionTime ? `<td>${escapeCell(c.transaction_time)}</td>` : ''}<td>${escapeCell(c.status)}</td></tr>`).join('');
+    const html = `<!doctype html><html><head><meta charset="utf-8"></head><body><h1>Susu Collection - ${escapeCell(reportLabel)}</h1><p>Date: ${escapeCell(new Date().toLocaleString())}</p><p>Total: GHS ${escapeCell(total.toLocaleString())} | Transactions: ${reportData.length}</p><table border="1"><tr><th>Ref</th><th>Customer</th><th>Account</th><th>Amount</th><th>Agent</th><th>Branch</th><th>Date</th>${showCollectionTime ? '<th>Time</th>' : ''}<th>Status</th></tr>${tableRows}</table><br><p>Agent Signature: _______________ &nbsp;&nbsp; Supervisor Signature: _______________</p></body></html>`;
     const blob = new Blob([html], { type: 'application/msword' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -207,10 +230,20 @@ export default function Reports() {
     const referenceNames = reportData.map((item) => item.agent_name).filter(Boolean);
     const columns = isDailySubmission
       ? ['Account Name', 'Account Number', 'Amount', 'Agent Code', 'Branch']
-      : ['Reference', 'Customer', 'Account', 'Amount', 'Agent', 'Branch', 'Date', 'Status'];
+      : ['Reference', 'Customer', 'Account', 'Amount', 'Agent', 'Branch', 'Date', ...(showCollectionTime ? ['Time'] : []), 'Status'];
     const rows = isDailySubmission
       ? reportData.map(c => [splitJoinedName(c.account_name, referenceNames), c.account_number, `GHS ${(c.amount || 0).toLocaleString()}`, c.agent_name, c.branch_name])
-      : reportData.map(c => [c.transaction_reference, c.account_name, c.account_number, `GHS ${(c.amount || 0).toLocaleString()}`, c.agent_name, c.branch_name, c.transaction_date, c.status]);
+      : reportData.map(c => [
+          c.transaction_reference,
+          c.account_name,
+          c.account_number,
+          `GHS ${(c.amount || 0).toLocaleString()}`,
+          c.agent_name,
+          c.branch_name,
+          c.transaction_date,
+          ...(showCollectionTime ? [c.transaction_time] : []),
+          c.status,
+        ]);
 
     exportHtmlPdf({
       title: reportLabel,

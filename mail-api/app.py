@@ -63,6 +63,8 @@ VERIFICATION_TTL_SECONDS = 15 * 60
 SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 RATE_LIMIT_WINDOW_SECONDS = 15 * 60
 RATE_LIMIT_MAX_ATTEMPTS = 8
+COLLECTION_LATE_START_SECONDS = 9 * 60 * 60
+COLLECTION_LONG_GAP_MINUTES = 90
 DEFAULT_PORTAL_BRANCHES = [
     "HEAD OFFICE",
     "BAWJIASE",
@@ -2888,6 +2890,32 @@ def can_view_operational_record(user: dict, item: dict) -> bool:
     )
 
 
+def collection_for_viewer(user: dict, item: dict) -> dict:
+    visible = dict(item)
+    if not can_manage_agents_and_customers(user):
+        visible.pop("transaction_time", None)
+        visible.pop("created_date", None)
+    return visible
+
+
+def collection_time_seconds(value: object) -> int | None:
+    text = str(value or "").strip()
+    for pattern in ("%H:%M:%S", "%H:%M"):
+        try:
+            parsed = time.strptime(text, pattern)
+            return parsed.tm_hour * 3600 + parsed.tm_min * 60 + parsed.tm_sec
+        except ValueError:
+            continue
+    return None
+
+
+def format_collection_time(seconds: int | None) -> str | None:
+    if seconds is None:
+        return None
+    value = max(0, min(int(seconds), (24 * 60 * 60) - 1))
+    return f"{value // 3600:02d}:{(value % 3600) // 60:02d}:{value % 60:02d}"
+
+
 def can_view_staff_record(viewer: dict, staff_user: dict) -> bool:
     if is_global_manager(viewer):
         return True
@@ -4760,9 +4788,100 @@ def get_collections():
     collections = load_json_list_store(COLLECTIONS_STORE_PATH)
     collections = [item for item in collections if can_view_operational_record(auth_user, item)]
     collections.sort(key=lambda item: int(item.get("created_date", 0) or 0), reverse=True)
+    collections = [collection_for_viewer(auth_user, item) for item in collections]
     if pagination_requested():
         return paginated_response("collections", collections)
     return jsonify({"collections": collections})
+
+
+@app.route("/api/collections/efficiency", methods=["GET"])
+def get_collection_efficiency():
+    _, auth_user, error = require_authenticated_user()
+    if error:
+        return error
+    if not can_manage_agents_and_customers(auth_user):
+        return jsonify({"error": "Supervisor or Owner access required"}), 403
+
+    date_key = str(request.args.get("date") or time.strftime("%Y-%m-%d")).strip()
+    try:
+        parsed_date = time.strptime(date_key, "%Y-%m-%d")
+    except ValueError:
+        return jsonify({"error": "Date must use YYYY-MM-DD format."}), 400
+    if time.strftime("%Y-%m-%d", parsed_date) != date_key:
+        return jsonify({"error": "Date must use YYYY-MM-DD format."}), 400
+
+    agent_id = str(request.args.get("agentId") or "").strip()
+    if not agent_id:
+        return jsonify({"error": "Select a SUSU agent to view efficiency."}), 400
+    users = load_user_store()
+    agent = find_user_by_id(users, agent_id)
+    if not agent or not is_susu_agent(agent):
+        return jsonify({"error": "SUSU agent not found."}), 404
+    agent_scope = {
+        "branch_name": str(agent.get("branch") or "").strip().upper(),
+        "agent_id": agent_id,
+    }
+    if not can_view_operational_record(auth_user, agent_scope):
+        return jsonify({"error": "You can only review agents in your assigned branch."}), 403
+
+    records = [
+        item
+        for item in load_json_list_store(COLLECTIONS_STORE_PATH)
+        if str(item.get("agent_id") or "").strip() == agent_id
+        and str(item.get("transaction_date") or "").strip() == date_key
+        and str(item.get("status", "completed") or "").strip().lower() == "completed"
+    ]
+    timed_records = sorted(
+        (
+            (seconds, item)
+            for item in records
+            if (seconds := collection_time_seconds(item.get("transaction_time"))) is not None
+        ),
+        key=lambda entry: entry[0],
+    )
+    gaps = []
+    for index in range(1, len(timed_records)):
+        previous_seconds = timed_records[index - 1][0]
+        current_seconds = timed_records[index][0]
+        gap_minutes = round((current_seconds - previous_seconds) / 60, 1)
+        gaps.append({
+            "from": format_collection_time(previous_seconds),
+            "to": format_collection_time(current_seconds),
+            "minutes": gap_minutes,
+        })
+    long_gaps = [item for item in gaps if item["minutes"] > COLLECTION_LONG_GAP_MINUTES]
+    first_seconds = timed_records[0][0] if timed_records else None
+    last_seconds = timed_records[-1][0] if timed_records else None
+    amount_total = 0.0
+    for item in records:
+        try:
+            amount_total += float(item.get("amount") or 0)
+        except (TypeError, ValueError):
+            continue
+
+    return jsonify({
+        "efficiency": {
+            "date": date_key,
+            "agent": {
+                "id": agent_id,
+                "name": str(agent.get("fullname") or agent.get("full_name") or "SUSU Agent"),
+                "branch": str(agent.get("branch") or "").strip().upper(),
+            },
+            "firstCollectionTime": format_collection_time(first_seconds),
+            "lastCollectionTime": format_collection_time(last_seconds),
+            "collectionCount": len(records),
+            "totalAmount": round(amount_total, 2),
+            "averageGapMinutes": round(sum(item["minutes"] for item in gaps) / len(gaps), 1) if gaps else None,
+            "longestGapMinutes": max((item["minutes"] for item in gaps), default=None),
+            "lateStart": bool(first_seconds is not None and first_seconds > COLLECTION_LATE_START_SECONDS),
+            "longGapCount": len(long_gaps),
+            "longGaps": long_gaps[:10],
+            "thresholds": {
+                "lateStartAfter": format_collection_time(COLLECTION_LATE_START_SECONDS),
+                "longGapMinutes": COLLECTION_LONG_GAP_MINUTES,
+            },
+        }
+    })
 
 
 @app.route("/api/collections", methods=["POST", "OPTIONS"])
@@ -4805,7 +4924,11 @@ def create_collection():
                 None,
             )
             if existing_idempotent:
-                return jsonify({"ok": True, "collection": existing_idempotent, "idempotent": True})
+                return jsonify({
+                    "ok": True,
+                    "collection": collection_for_viewer(auth_user, existing_idempotent),
+                    "idempotent": True,
+                })
         customers = load_json_list_store(CUSTOMERS_STORE_PATH)
         customer = next((item for item in customers if item.get("id") == customer_id), None)
         if not customer:
@@ -4862,7 +4985,11 @@ def create_collection():
             guard_status, existing = "created", None
         if guard_status == "idempotent":
             if existing:
-                return jsonify({"ok": True, "collection": existing, "idempotent": True})
+                return jsonify({
+                    "ok": True,
+                    "collection": collection_for_viewer(auth_user, existing),
+                    "idempotent": True,
+                })
             return jsonify({"error": "The original deposit is still being saved. Please wait and refresh."}), 409
         if guard_status == "duplicate":
             return jsonify({"error": "This customer already has a completed deposit for today."}), 409
@@ -4883,7 +5010,7 @@ def create_collection():
         message=f"{auth_user['fullname']} recorded GHS {amount:,.2f} for {collection['account_name']}.",
         link_to="/transactions",
     )
-    return jsonify({"ok": True, "collection": collection})
+    return jsonify({"ok": True, "collection": collection_for_viewer(auth_user, collection)})
 
 
 @app.route("/api/collections/<collection_id>/review", methods=["POST", "OPTIONS"])

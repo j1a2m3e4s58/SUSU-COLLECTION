@@ -325,6 +325,14 @@ export async function getCollectionsPage(page = 1, pageSize = 25) {
   return { items: data.collections || [], pagination: data.pagination };
 }
 
+export async function getCollectionEfficiency(agentId, date) {
+  const params = new URLSearchParams();
+  params.set("agentId", agentId);
+  params.set("date", date);
+  const data = await apiRequest(`/collections/efficiency?${params.toString()}`);
+  return data.efficiency;
+}
+
 export async function createCollection(payload) {
   const data = await apiRequest("/collections", {
     method: "POST",

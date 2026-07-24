@@ -653,12 +653,132 @@ def test_collection_enforces_branch_account_and_duplicate_protection(monkeypatch
     assert invalid_account.status_code == 409
     first = client.post("/api/collections", json={"customer_id": "customer-own", "amount": 10, "idempotency_key": "deposit-1"}, headers=headers)
     assert first.status_code == 200
+    assert "transaction_time" not in first.get_json()["collection"]
+    assert "created_date" not in first.get_json()["collection"]
     replay = client.post("/api/collections", json={"customer_id": "customer-own", "amount": 10, "idempotency_key": "deposit-1"}, headers=headers)
     assert replay.status_code == 200
     assert replay.get_json()["idempotent"] is True
     duplicate = client.post("/api/collections", json={"customer_id": "customer-own", "amount": 12, "idempotency_key": "deposit-2"}, headers=headers)
     assert duplicate.status_code == 400
     assert "already has a completed deposit" in duplicate.get_json()["error"]
+
+
+def test_collection_efficiency_is_manager_only_scoped_and_complete(monkeypatch, tmp_path):
+    app_module = load_app(monkeypatch, tmp_path)
+    supervisor = {
+        "id": "supervisor-efficiency",
+        "fullname": "Bawjiase Supervisor",
+        "phone": "0240000040",
+        "email": "efficiency.supervisor@bawjiasecommunitybank.com",
+        "role": "Supervisor",
+        "department": "SUSU",
+        "branch": "BAWJIASE",
+        "managedBranches": ["BAWJIASE"],
+        "isActive": True,
+        "isVerified": True,
+    }
+    agent = {
+        "id": "agent-efficiency",
+        "fullname": "Efficiency Agent",
+        "phone": "0240000041",
+        "email": "efficiency.agent@agents.local",
+        "role": "GeneralStaff",
+        "department": "SUSU",
+        "branch": "BAWJIASE",
+        "isActive": True,
+        "isVerified": True,
+    }
+    other_agent = {
+        "id": "agent-other-branch",
+        "fullname": "Other Branch Agent",
+        "phone": "0240000042",
+        "email": "other.efficiency@agents.local",
+        "role": "GeneralStaff",
+        "department": "SUSU",
+        "branch": "OFAAKOR",
+        "isActive": True,
+        "isVerified": True,
+    }
+    save_test_users(app_module, supervisor, agent, other_agent)
+    app_module.save_json_list_store(app_module.COLLECTIONS_STORE_PATH, [
+        {
+            "id": "efficiency-1",
+            "customer_id": "customer-1",
+            "account_number": "1310000100041",
+            "amount": 10,
+            "agent_id": "agent-efficiency",
+            "agent_name": "Efficiency Agent",
+            "branch_name": "BAWJIASE",
+            "transaction_date": "2026-07-24",
+            "transaction_time": "09:30:00",
+            "status": "completed",
+            "created_date": 1,
+        },
+        {
+            "id": "efficiency-2",
+            "customer_id": "customer-2",
+            "account_number": "1310000100042",
+            "amount": 20,
+            "agent_id": "agent-efficiency",
+            "agent_name": "Efficiency Agent",
+            "branch_name": "BAWJIASE",
+            "transaction_date": "2026-07-24",
+            "transaction_time": "10:00:00",
+            "status": "completed",
+            "created_date": 2,
+        },
+        {
+            "id": "efficiency-3",
+            "customer_id": "customer-3",
+            "account_number": "1310000100043",
+            "amount": 30,
+            "agent_id": "agent-efficiency",
+            "agent_name": "Efficiency Agent",
+            "branch_name": "BAWJIASE",
+            "transaction_date": "2026-07-24",
+            "transaction_time": "12:00:00",
+            "status": "completed",
+            "created_date": 3,
+        },
+    ])
+    client = app_module.app.test_client()
+    agent_headers = auth_headers(app_module, "agent-efficiency")
+    agent_collections = client.get("/api/collections", headers=agent_headers)
+    assert agent_collections.status_code == 200
+    visible = agent_collections.get_json()["collections"]
+    assert len(visible) == 3
+    assert all("transaction_time" not in item and "created_date" not in item for item in visible)
+    denied = client.get(
+        "/api/collections/efficiency?agentId=agent-efficiency&date=2026-07-24",
+        headers=agent_headers,
+    )
+    assert denied.status_code == 403
+
+    supervisor_headers = auth_headers(app_module, "supervisor-efficiency")
+    response = client.get(
+        "/api/collections/efficiency?agentId=agent-efficiency&date=2026-07-24",
+        headers=supervisor_headers,
+    )
+    assert response.status_code == 200
+    efficiency = response.get_json()["efficiency"]
+    assert efficiency["firstCollectionTime"] == "09:30:00"
+    assert efficiency["lastCollectionTime"] == "12:00:00"
+    assert efficiency["collectionCount"] == 3
+    assert efficiency["totalAmount"] == 60
+    assert efficiency["averageGapMinutes"] == 75
+    assert efficiency["longestGapMinutes"] == 120
+    assert efficiency["lateStart"] is True
+    assert efficiency["longGapCount"] == 1
+    assert efficiency["thresholds"] == {
+        "lateStartAfter": "09:00:00",
+        "longGapMinutes": 90,
+    }
+
+    out_of_scope = client.get(
+        "/api/collections/efficiency?agentId=agent-other-branch&date=2026-07-24",
+        headers=supervisor_headers,
+    )
+    assert out_of_scope.status_code == 403
 
 
 def test_session_uses_short_idle_and_absolute_expiry(monkeypatch, tmp_path):
